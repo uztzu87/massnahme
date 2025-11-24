@@ -111,42 +111,46 @@ register_deactivation_hook(__FILE__, function() {
  */
 function mgc_create_tables() {
     global $wpdb;
-    
+
     $charset_collate = $wpdb->get_charset_collate();
-    $table_name = $wpdb->prefix . 'mgc_gift_cards';
+
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+
     // Create main gift cards table
+    $table_name = $wpdb->prefix . 'mgc_gift_cards';
     $sql = "CREATE TABLE $table_name (
-        id int(11) NOT NULL AUTO_INCREMENT,
+        id bigint(20) NOT NULL AUTO_INCREMENT,
         code varchar(50) NOT NULL,
         amount decimal(10,2) NOT NULL,
         balance decimal(10,2) NOT NULL,
         order_id bigint(20) DEFAULT NULL,
-        purchaser_email varchar(100),
-        recipient_email varchar(100),
-        message text,
+        purchaser_email varchar(100) DEFAULT NULL,
+        recipient_email varchar(100) DEFAULT NULL,
+        message text DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
-        expires_at datetime,
+        expires_at datetime DEFAULT NULL,
         status varchar(20) DEFAULT 'active',
-        PRIMARY KEY (id),
+        PRIMARY KEY  (id),
         UNIQUE KEY code (code),
         KEY order_id (order_id),
         KEY status (status)
     ) $charset_collate;";
 
+    dbDelta($sql);
+
     // Create usage log table for tracking redemptions
     $usage_table = $wpdb->prefix . 'mgc_gift_card_usage';
-    $sql .= "CREATE TABLE $usage_table (
-        id int(11) NOT NULL AUTO_INCREMENT,
+    $sql2 = "CREATE TABLE $usage_table (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
         gift_card_code varchar(50) NOT NULL,
         order_id bigint(20) NOT NULL,
         amount_used decimal(10,2) NOT NULL,
         remaining_balance decimal(10,2) NOT NULL,
         used_at datetime DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
+        PRIMARY KEY  (id),
         KEY gift_card_code (gift_card_code),
         KEY order_id (order_id)
     ) $charset_collate;";
 
-    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
+    dbDelta($sql2);
 }

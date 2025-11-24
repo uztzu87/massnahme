@@ -2,6 +2,12 @@
 /**
  * Email handling for gift cards
  */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 class MGC_Email {
     
     private static $instance = null;

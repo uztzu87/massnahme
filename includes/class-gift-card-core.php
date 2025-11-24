@@ -2,6 +2,12 @@
 /**
  * Core functionality
  */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 class MGC_Core {
     
     private static $instance = null;
