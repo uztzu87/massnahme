@@ -209,14 +209,17 @@ class MGC_Core {
     }
     
     public function enqueue_frontend_scripts() {
-        if (is_checkout() || has_shortcode(get_post()->post_content, 'massnahme_gift_balance')) {
+        $post = get_post();
+        $should_enqueue = is_checkout() || ($post && has_shortcode($post->post_content, 'massnahme_gift_balance'));
+
+        if ($should_enqueue) {
             wp_enqueue_style(
                 'mgc-frontend',
                 MGC_PLUGIN_URL . 'assets/css/frontend.css',
                 [],
                 MGC_VERSION
             );
-            
+
             wp_enqueue_script(
                 'mgc-frontend',
                 MGC_PLUGIN_URL . 'assets/js/frontend.js',
@@ -224,7 +227,7 @@ class MGC_Core {
                 MGC_VERSION,
                 true
             );
-            
+
             wp_localize_script('mgc-frontend', 'mgc_ajax', [
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('mgc_nonce')
