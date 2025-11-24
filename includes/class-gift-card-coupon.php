@@ -112,15 +112,19 @@ class MGC_Coupon {
         if ($coupon->get_meta('_mgc_gift_card') !== 'yes') {
             return $discount;
         }
-        
+
+        if (!function_exists('WC') || !WC()->cart) {
+            return $discount;
+        }
+
         $balance = floatval($coupon->get_meta('_mgc_balance'));
         $cart_total = WC()->cart->get_subtotal();
-        
+
         // If balance is less than cart total, use balance
         if ($balance < $cart_total) {
             return $balance;
         }
-        
+
         // Otherwise use cart total
         return $cart_total;
     }

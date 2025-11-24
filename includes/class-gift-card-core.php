@@ -205,6 +205,10 @@ class MGC_Core {
     }
     
     private function cart_has_gift_card() {
+        if (!function_exists('WC') || !WC()->cart) {
+            return false;
+        }
+
         foreach (WC()->cart->get_cart() as $cart_item) {
             $product = $cart_item['data'];
             if ($product->get_meta('_mgc_gift_card') === 'yes') {
@@ -216,7 +220,7 @@ class MGC_Core {
     
     public function enqueue_frontend_scripts() {
         $post = get_post();
-        $should_enqueue = is_checkout() || ($post && has_shortcode($post->post_content, 'massnahme_gift_balance'));
+        $should_enqueue = (function_exists('is_checkout') && is_checkout()) || ($post && has_shortcode($post->post_content, 'massnahme_gift_balance'));
 
         if ($should_enqueue) {
             wp_enqueue_style(
