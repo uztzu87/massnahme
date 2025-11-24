@@ -73,12 +73,12 @@ class MGC_Core {
             'sku' => 'MGC-' . $amount,
             'limit' => 1
         ]);
-        
+
         if (!empty($existing)) {
             return;
         }
-        
-        $product = new WC_Product_Virtual();
+
+        $product = new WC_Product_Simple();
         $product->set_name($title);
         $product->set_sku('MGC-' . $amount);
         $product->set_regular_price($amount);
