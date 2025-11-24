@@ -118,7 +118,13 @@ add_action('plugins_loaded', 'mgc_init', 11);
  * Activation hook
  */
 register_activation_hook(__FILE__, function() {
-    if (!mgc_check_woocommerce()) {
+    // Include plugin.php to use is_plugin_active()
+    if (!function_exists('is_plugin_active')) {
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
+
+    // Check if WooCommerce is active
+    if (!is_plugin_active('woocommerce/woocommerce.php')) {
         wp_die(__('Please install and activate WooCommerce before activating this plugin.', 'massnahme-gift-cards'));
     }
     
