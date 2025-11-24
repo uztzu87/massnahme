@@ -45,31 +45,72 @@ function mgc_check_woocommerce() {
  * Initialize the plugin
  */
 function mgc_init() {
-    if (!mgc_check_woocommerce()) {
+    try {
+        if (!mgc_check_woocommerce()) {
+            return;
+        }
+
+        // Load text domain
+        load_plugin_textdomain('massnahme-gift-cards', false, dirname(MGC_PLUGIN_BASENAME) . '/languages');
+
+        // Include required files
+        $required_files = [
+            'includes/class-gift-card-core.php',
+            'includes/class-gift-card-admin.php',
+            'includes/class-gift-card-email.php',
+            'includes/class-gift-card-coupon.php'
+        ];
+
+        foreach ($required_files as $file) {
+            $file_path = MGC_PLUGIN_DIR . $file;
+            if (!file_exists($file_path)) {
+                throw new Exception(sprintf('Required file missing: %s', $file));
+            }
+            require_once $file_path;
+        }
+
+        // Ensure necessary tables exist (covers upgrades / missed activations)
+        global $wpdb;
+        $expected_table = $wpdb->prefix . 'mgc_gift_cards';
+        if ($wpdb->get_var("SHOW TABLES LIKE '" . esc_sql($expected_table) . "'") !== $expected_table) {
+            mgc_create_tables();
+        }
+
+        // Initialize classes
+        if (!class_exists('MGC_Core')) {
+            throw new Exception('MGC_Core class not found');
+        }
+        if (!class_exists('MGC_Admin')) {
+            throw new Exception('MGC_Admin class not found');
+        }
+        if (!class_exists('MGC_Email')) {
+            throw new Exception('MGC_Email class not found');
+        }
+        if (!class_exists('MGC_Coupon')) {
+            throw new Exception('MGC_Coupon class not found');
+        }
+
+        MGC_Core::get_instance();
+        MGC_Admin::get_instance();
+        MGC_Email::get_instance();
+        MGC_Coupon::get_instance();
+
+    } catch (Exception $e) {
+        // Log the error
+        error_log('Massnahme Gift Cards Error: ' . $e->getMessage());
+
+        // Show admin notice
+        add_action('admin_notices', function() use ($e) {
+            ?>
+            <div class="notice notice-error">
+                <p><strong>Massnahme Gift Cards Error:</strong> <?php echo esc_html($e->getMessage()); ?></p>
+                <p>Please check your error logs for more details.</p>
+            </div>
+            <?php
+        });
+
         return;
     }
-
-    // Load text domain
-    load_plugin_textdomain('massnahme-gift-cards', false, dirname(MGC_PLUGIN_BASENAME) . '/languages');
-
-    // Include required files
-    require_once MGC_PLUGIN_DIR . 'includes/class-gift-card-core.php';
-    require_once MGC_PLUGIN_DIR . 'includes/class-gift-card-admin.php';
-    require_once MGC_PLUGIN_DIR . 'includes/class-gift-card-email.php';
-    require_once MGC_PLUGIN_DIR . 'includes/class-gift-card-coupon.php';
-
-    // Ensure necessary tables exist (covers upgrades / missed activations)
-    global $wpdb;
-    $expected_table = $wpdb->prefix . 'mgc_gift_cards';
-    if ($wpdb->get_var("SHOW TABLES LIKE '" . esc_sql($expected_table) . "'") !== $expected_table) {
-        mgc_create_tables();
-    }
-
-    // Initialize classes
-    MGC_Core::get_instance();
-    MGC_Admin::get_instance();
-    MGC_Email::get_instance();
-    MGC_Coupon::get_instance();
 }
 add_action('plugins_loaded', 'mgc_init', 11);
 
