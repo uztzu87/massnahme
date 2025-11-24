@@ -22,14 +22,31 @@ class MGC_Email {
     private function __construct() {
         // Add custom email classes
         add_filter('woocommerce_email_classes', [$this, 'add_email_classes']);
-        
+
         // Schedule delayed emails
         add_action('mgc_send_scheduled_gift_card', [$this, 'send_scheduled_gift_card'], 10, 2);
-        
+
         // Email actions
         add_action('mgc_gift_card_created', [$this, 'trigger_gift_card_email'], 10, 2);
     }
-    
+
+    /**
+     * Add custom email classes to WooCommerce
+     */
+    public function add_email_classes($email_classes) {
+        // Currently using wp_mail() directly
+        // This method is here to prevent fatal errors
+        // Custom WooCommerce email classes can be added here in the future
+        return $email_classes;
+    }
+
+    /**
+     * Trigger gift card email when created
+     */
+    public function trigger_gift_card_email($code, $order) {
+        $this->send_gift_card($code, $order);
+    }
+
     /**
      * Send gift card email
      */
