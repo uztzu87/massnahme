@@ -2,6 +2,12 @@
 /**
  * Admin functionality
  */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 class MGC_Admin {
     
     private static $instance = null;

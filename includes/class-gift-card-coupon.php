@@ -2,6 +2,12 @@
 /**
  * Coupon management for gift cards
  */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
 class MGC_Coupon {
     
     private static $instance = null;
@@ -17,8 +23,10 @@ class MGC_Coupon {
         // Hook into coupon validation
         add_filter('woocommerce_coupon_is_valid', [$this, 'validate_gift_coupon'], 10, 2);
         add_filter('woocommerce_coupon_error', [$this, 'custom_coupon_messages'], 10, 3);
-        add_action('woocommerce_applied_coupon', [$this, 'track_coupon_usage']);
-        
+
+        // Track usage after order is placed
+        add_action('woocommerce_checkout_order_processed', [$this, 'process_order_coupons'], 10, 1);
+
         // Partial redemption support
         add_filter('woocommerce_coupon_get_discount_amount', [$this, 'calculate_discount'], 10, 5);
     }
@@ -118,19 +126,24 @@ class MGC_Coupon {
     }
     
     /**
-     * Track coupon usage and update balance
+     * Process all gift card coupons in an order
      */
-    public function track_coupon_usage($coupon_code) {
-        $coupon = new WC_Coupon($coupon_code);
-        
-        if ($coupon->get_meta('_mgc_gift_card') !== 'yes') {
+    public function process_order_coupons($order_id) {
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
             return;
         }
-        
-        // This will be called after order is placed
-        add_action('woocommerce_checkout_order_processed', function($order_id) use ($coupon) {
-            $this->update_gift_card_balance($coupon, $order_id);
-        });
+
+        // Process each coupon used in the order
+        foreach ($order->get_coupon_codes() as $coupon_code) {
+            $coupon = new WC_Coupon($coupon_code);
+
+            // Check if this is a gift card coupon
+            if ($coupon->get_meta('_mgc_gift_card') === 'yes') {
+                $this->update_gift_card_balance($coupon, $order_id);
+            }
+        }
     }
     
     /**
