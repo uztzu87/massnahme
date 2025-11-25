@@ -23,6 +23,9 @@ class MGC_Admin {
         add_action('admin_menu', [$this, 'add_menu_pages']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
         add_filter('woocommerce_screen_ids', [$this, 'add_screen_ids']);
+
+        // AJAX handlers
+        add_action('wp_ajax_mgc_update_balance', [$this, 'ajax_update_balance']);
     }
     
     public function add_menu_pages() {
@@ -114,7 +117,8 @@ class MGC_Admin {
         
         wp_localize_script('mgc-admin', 'mgc_admin', [
             'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('mgc_admin_nonce')
+            'nonce' => wp_create_nonce('mgc_admin_nonce'),
+            'currency' => get_woocommerce_currency()
         ]);
     }
     
@@ -123,5 +127,93 @@ class MGC_Admin {
         $screen_ids[] = 'gift-cards_page_mgc-validate';
         $screen_ids[] = 'gift-cards_page_mgc-settings';
         return $screen_ids;
+    }
+
+    /**
+     * AJAX handler for updating gift card balance
+     */
+    public function ajax_update_balance() {
+        // Security checks
+        check_ajax_referer('mgc_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field($_POST['code']) : '';
+        $new_balance = isset($_POST['balance']) ? floatval($_POST['balance']) : -1;
+
+        if (empty($code)) {
+            wp_send_json_error(__('Invalid gift card code', 'massnahme-gift-cards'));
+        }
+
+        if ($new_balance < 0) {
+            wp_send_json_error(__('Balance cannot be negative', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        // Get current gift card data
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+        }
+
+        // Balance cannot exceed original amount
+        if ($new_balance > floatval($gift_card->amount)) {
+            wp_send_json_error(__('Balance cannot exceed original amount', 'massnahme-gift-cards'));
+        }
+
+        $old_balance = floatval($gift_card->balance);
+
+        // Determine new status based on balance
+        $new_status = $new_balance > 0 ? 'active' : 'used';
+
+        // Update database
+        $updated = $wpdb->update(
+            $table,
+            [
+                'balance' => $new_balance,
+                'status' => $new_status
+            ],
+            ['code' => $code],
+            ['%f', '%s'],
+            ['%s']
+        );
+
+        if ($updated === false) {
+            wp_send_json_error(__('Failed to update balance', 'massnahme-gift-cards'));
+        }
+
+        // Update WooCommerce coupon meta
+        $coupon = new WC_Coupon($code);
+        if ($coupon->get_id()) {
+            $coupon->update_meta_data('_mgc_balance', $new_balance);
+            $coupon->save();
+        }
+
+        // Log the manual balance change
+        $wpdb->insert(
+            $wpdb->prefix . 'mgc_gift_card_usage',
+            [
+                'gift_card_code' => $code,
+                'order_id' => 0, // 0 indicates manual adjustment
+                'amount_used' => $old_balance - $new_balance,
+                'remaining_balance' => $new_balance,
+                'used_at' => current_time('mysql')
+            ]
+        );
+
+        wp_send_json_success([
+            'message' => __('Balance updated successfully', 'massnahme-gift-cards'),
+            'new_balance' => $new_balance,
+            'new_status' => $new_status,
+            'formatted_balance' => wc_price($new_balance)
+        ]);
     }
 }
