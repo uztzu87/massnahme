@@ -25,6 +25,15 @@ define('MGC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('MGC_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
+ * Declare compatibility with WooCommerce High-Performance Order Storage (HPOS)
+ */
+add_action('before_woocommerce_init', function() {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+    }
+});
+
+/**
  * Check if WooCommerce is active
  */
 function mgc_check_woocommerce() {
