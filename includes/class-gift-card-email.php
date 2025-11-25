@@ -244,51 +244,101 @@ class MGC_Email {
      * Generate PDF for gift card
      */
     private function generate_pdf($gift_card) {
-        // Check if PDF library is available
-        if (!class_exists('TCPDF') && file_exists(MGC_PLUGIN_DIR . 'lib/tcpdf/tcpdf.php')) {
-            require_once MGC_PLUGIN_DIR . 'lib/tcpdf/tcpdf.php';
+        // Load our simple PDF generator
+        if (!class_exists('MGC_Simple_PDF')) {
+            require_once MGC_PLUGIN_DIR . 'lib/pdf/class-simple-pdf.php';
         }
-        
-        if (!class_exists('TCPDF')) {
-            // Fallback to HTML
-            return $this->generate_html_pdf($gift_card);
-        }
-        
-        // Generate actual PDF using TCPDF
-        $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
-        
-        // Set document information
-        $pdf->SetCreator('Massnahme Gift Cards');
-        $pdf->SetAuthor(get_bloginfo('name'));
-        $pdf->SetTitle('Gift Card - ' . $gift_card->code);
-        
-        // Remove default header/footer
-        $pdf->setPrintHeader(false);
-        $pdf->setPrintFooter(false);
-        
-        // Add page
-        $pdf->AddPage();
-        
-        // Set font
-        $pdf->SetFont('helvetica', '', 12);
-        
-        // Add content
-        $html = $this->get_pdf_content($gift_card);
-        $pdf->writeHTML($html, true, false, true, false, '');
-        
-        // Save PDF
+
+        // Create upload directory
         $upload_dir = wp_upload_dir();
         $pdf_dir = $upload_dir['basedir'] . '/mgc-gift-cards/';
-        
+
         if (!file_exists($pdf_dir)) {
             wp_mkdir_p($pdf_dir);
         }
-        
+
+        // Generate PDF using our simple PDF class
+        $pdf = new MGC_Simple_PDF();
+        $pdf->addPage();
+
+        // Header background
+        $pdf->setFillColor(0, 0, 0);
+        $pdf->rect(0, 0, $pdf->getPageWidth(), 120, 'F');
+
+        // Store name in header
+        $pdf->setTextColor(212, 175, 55); // Gold color
+        $pdf->setFontSize(28);
+        $pdf->setY(40);
+        $pdf->write(html_entity_decode(get_bloginfo('name')), 'C');
+
+        // Gift Card title
+        $pdf->setTextColor(255, 255, 255);
+        $pdf->setFontSize(16);
+        $pdf->ln(15);
+        $pdf->write('GIFT CARD', 'C');
+
+        // Amount section
+        $pdf->setY(160);
+        $pdf->setTextColor(212, 175, 55);
+        $pdf->setFontSize(48);
+        $pdf->write(html_entity_decode(strip_tags(wc_price($gift_card->amount))), 'C');
+
+        // Personal message if exists
+        if (!empty($gift_card->message)) {
+            $pdf->setY(230);
+            $pdf->setTextColor(100, 100, 100);
+            $pdf->setFontSize(12);
+            $pdf->write('"' . $gift_card->message . '"', 'C');
+        }
+
+        // Code section
+        $pdf->setY(290);
+        $pdf->setFillColor(245, 245, 245);
+        $pdf->rect(50, 280, $pdf->getPageWidth() - 100, 80, 'F');
+
+        $pdf->setTextColor(100, 100, 100);
+        $pdf->setFontSize(12);
+        $pdf->write('Your Gift Card Code:', 'C');
+
+        $pdf->ln(25);
+        $pdf->setTextColor(0, 0, 0);
+        $pdf->setFontSize(24);
+        $pdf->write($gift_card->code, 'C');
+
+        // Details section
+        $pdf->setY(400);
+        $pdf->setTextColor(80, 80, 80);
+        $pdf->setFontSize(11);
+
+        $pdf->write('Recipient: ' . $gift_card->recipient_email, 'C');
+        $pdf->ln(20);
+        $pdf->write('Issued: ' . date_i18n(get_option('date_format'), strtotime($gift_card->created_at)), 'C');
+        $pdf->ln(20);
+        $pdf->write('Expires: ' . date_i18n(get_option('date_format'), strtotime($gift_card->expires_at)), 'C');
+        $pdf->ln(20);
+        $pdf->write('Balance: ' . html_entity_decode(strip_tags(wc_price($gift_card->balance))), 'C');
+
+        // Footer
+        $pdf->setY(550);
+        $pdf->setDrawColor(200, 200, 200);
+        $pdf->line(50, 540, $pdf->getPageWidth() - 50, 540);
+
+        $pdf->setTextColor(120, 120, 120);
+        $pdf->setFontSize(10);
+        $pdf->write('To redeem this gift card, enter the code above at checkout.', 'C');
+        $pdf->ln(18);
+        $pdf->write(html_entity_decode(get_bloginfo('name')) . ' - ' . home_url(), 'C');
+
+        // Save PDF
         $pdf_filename = sanitize_file_name('gift-card-' . $gift_card->code . '.pdf');
         $pdf_path = $pdf_dir . $pdf_filename;
-        $pdf->Output($pdf_path, 'F');
-        
-        return $pdf_path;
+
+        if ($pdf->output($pdf_path)) {
+            return $pdf_path;
+        }
+
+        // Fallback to HTML if PDF generation fails
+        return $this->generate_html_pdf($gift_card);
     }
     
     /**
