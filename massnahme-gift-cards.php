@@ -25,6 +25,32 @@ define('MGC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('MGC_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
+ * Declare WooCommerce feature compatibility
+ *
+ * This must run before WooCommerce initializes to properly register compatibility.
+ */
+add_action('before_woocommerce_init', function() {
+    if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
+        // Declare HPOS (High-Performance Order Storage / Custom Order Tables) compatibility
+        // Plugin uses WC_Order methods for metadata, which are HPOS-compatible
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'custom_order_tables',
+            __FILE__,
+            true
+        );
+
+        // Declare Cart/Checkout Blocks compatibility
+        // Currently incompatible: checkout fields use classic woocommerce_after_order_notes hook
+        // Setting to false informs WooCommerce that classic checkout is required for full functionality
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility(
+            'cart_checkout_blocks',
+            __FILE__,
+            false
+        );
+    }
+});
+
+/**
  * Check if WooCommerce is active
  */
 function mgc_check_woocommerce() {
