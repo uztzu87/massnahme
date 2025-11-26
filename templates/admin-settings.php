@@ -52,6 +52,38 @@ $store_locations = $settings['store_locations'] ?? [];
         </table>
 
         <hr>
+        <h2><?php _e('Custom Amount Gift Card', 'massnahme-gift-cards'); ?></h2>
+        <p class="description"><?php _e('Configure the custom amount gift card that allows customers to choose their own value.', 'massnahme-gift-cards'); ?></p>
+
+        <table class="form-table">
+            <tr>
+                <th><?php _e('Enable Custom Amount', 'massnahme-gift-cards'); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="enable_custom_amount" value="1" <?php checked($settings['enable_custom_amount'] ?? true); ?>>
+                        <?php _e('Allow customers to choose their own gift card amount', 'massnahme-gift-cards'); ?>
+                    </label>
+                </td>
+            </tr>
+
+            <tr>
+                <th><label for="custom_min_amount"><?php _e('Minimum Amount', 'massnahme-gift-cards'); ?></label></th>
+                <td>
+                    <input type="number" name="custom_min_amount" id="custom_min_amount" value="<?php echo esc_attr($settings['custom_min_amount'] ?? 50); ?>" class="small-text" step="1" min="1">
+                    <span class="description"><?php echo get_woocommerce_currency_symbol(); ?></span>
+                </td>
+            </tr>
+
+            <tr>
+                <th><label for="custom_max_amount"><?php _e('Maximum Amount', 'massnahme-gift-cards'); ?></label></th>
+                <td>
+                    <input type="number" name="custom_max_amount" id="custom_max_amount" value="<?php echo esc_attr($settings['custom_max_amount'] ?? 300); ?>" class="small-text" step="1" min="1">
+                    <span class="description"><?php echo get_woocommerce_currency_symbol(); ?></span>
+                </td>
+            </tr>
+        </table>
+
+        <hr>
         <h2><?php _e('Delivery Options', 'massnahme-gift-cards'); ?></h2>
 
         <table class="form-table">
