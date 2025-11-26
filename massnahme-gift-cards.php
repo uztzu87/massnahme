@@ -199,14 +199,18 @@ function mgc_create_tables() {
         order_id bigint(20) DEFAULT NULL,
         purchaser_email varchar(100) DEFAULT NULL,
         recipient_email varchar(100) DEFAULT NULL,
+        recipient_name varchar(100) DEFAULT NULL,
         message text DEFAULT NULL,
+        delivery_method varchar(20) DEFAULT 'digital',
+        pickup_location varchar(100) DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         expires_at datetime DEFAULT NULL,
         status varchar(20) DEFAULT 'active',
         PRIMARY KEY  (id),
         UNIQUE KEY code (code),
         KEY order_id (order_id),
-        KEY status (status)
+        KEY status (status),
+        KEY delivery_method (delivery_method)
     ) $charset_collate;";
 
     dbDelta($sql);
@@ -226,4 +230,29 @@ function mgc_create_tables() {
     ) $charset_collate;";
 
     dbDelta($sql2);
+
+    // Run migration for existing installations
+    mgc_migrate_delivery_columns();
+}
+
+/**
+ * Add delivery columns to existing installations
+ */
+function mgc_migrate_delivery_columns() {
+    global $wpdb;
+
+    $table_name = $wpdb->prefix . 'mgc_gift_cards';
+
+    // Check if delivery_method column exists
+    $column_exists = $wpdb->get_results($wpdb->prepare(
+        "SHOW COLUMNS FROM `$table_name` LIKE %s",
+        'delivery_method'
+    ));
+
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE `$table_name` ADD COLUMN `delivery_method` varchar(20) DEFAULT 'digital' AFTER `message`");
+        $wpdb->query("ALTER TABLE `$table_name` ADD COLUMN `pickup_location` varchar(100) DEFAULT NULL AFTER `delivery_method`");
+        $wpdb->query("ALTER TABLE `$table_name` ADD COLUMN `recipient_name` varchar(100) DEFAULT NULL AFTER `recipient_email`");
+        $wpdb->query("ALTER TABLE `$table_name` ADD INDEX `delivery_method` (`delivery_method`)");
+    }
 }

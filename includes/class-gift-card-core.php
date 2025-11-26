@@ -26,24 +26,38 @@ class MGC_Core {
     private function init_hooks() {
         // Product creation
         add_action('init', [$this, 'create_gift_products']);
-        
+
         // Order processing
         add_action('woocommerce_order_status_processing', [$this, 'process_gift_card_order']);
         add_action('woocommerce_order_status_completed', [$this, 'process_gift_card_order']);
-        
+
         // Checkout fields
         add_action('woocommerce_after_order_notes', [$this, 'add_checkout_fields']);
         add_action('woocommerce_checkout_create_order', [$this, 'save_checkout_fields'], 10, 2);
-        
+
         // Enqueue scripts
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
-        
+
         // AJAX handlers
         add_action('wp_ajax_mgc_validate_code', [$this, 'ajax_validate_code']);
         add_action('wp_ajax_nopriv_mgc_validate_code', [$this, 'ajax_validate_code']);
-        
+        add_action('wp_ajax_mgc_set_delivery_method', [$this, 'ajax_set_delivery_method']);
+        add_action('wp_ajax_nopriv_mgc_set_delivery_method', [$this, 'ajax_set_delivery_method']);
+
         // Shortcodes
         add_shortcode('massnahme_gift_balance', [$this, 'balance_checker_shortcode']);
+
+        // Add shipping fee for gift card delivery
+        add_action('woocommerce_cart_calculate_fees', [$this, 'add_gift_card_shipping_fee']);
+
+        // Start session for delivery method tracking
+        add_action('init', [$this, 'start_session'], 1);
+    }
+
+    public function start_session() {
+        if (!session_id() && !headers_sent()) {
+            session_start();
+        }
     }
     
     public function create_gift_products() {
@@ -121,11 +135,16 @@ class MGC_Core {
     
     private function create_gift_card($order, $item) {
         global $wpdb;
-        
+
         $code = $this->generate_unique_code();
         $amount = $item->get_total();
         $settings = get_option('mgc_settings');
-        
+
+        // Get delivery method and related data
+        $delivery_method = $order->get_meta('_mgc_delivery_method') ?: 'digital';
+        $pickup_location = $order->get_meta('_mgc_pickup_location');
+        $recipient_name = $order->get_meta('_mgc_recipient_name');
+
         // Insert into database
         $wpdb->insert(
             $wpdb->prefix . 'mgc_gift_cards',
@@ -136,23 +155,50 @@ class MGC_Core {
                 'order_id' => $order->get_id(),
                 'purchaser_email' => $order->get_billing_email(),
                 'recipient_email' => $order->get_meta('_mgc_recipient_email') ?: $order->get_billing_email(),
+                'recipient_name' => $recipient_name,
                 'message' => $order->get_meta('_mgc_message'),
+                'delivery_method' => $delivery_method,
+                'pickup_location' => $pickup_location,
                 'expires_at' => date('Y-m-d H:i:s', strtotime('+' . $settings['expiry_days'] . ' days')),
                 'status' => 'active'
             ]
         );
-        
+
         // Create WooCommerce coupon
         MGC_Coupon::get_instance()->create_coupon($code, $amount, $order->get_id());
-        
-        // Send email
-        MGC_Email::get_instance()->send_gift_card($code, $order);
-        
-        // Log the creation
+
+        // Handle based on delivery method
+        switch ($delivery_method) {
+            case 'digital':
+                // Send email immediately or schedule
+                MGC_Email::get_instance()->send_gift_card($code, $order);
+                break;
+
+            case 'pickup':
+                // Send store notification
+                MGC_Email::get_instance()->send_store_pickup_notification($code, $order);
+                // Send confirmation to purchaser
+                MGC_Email::get_instance()->send_pickup_confirmation($code, $order);
+                break;
+
+            case 'shipping':
+                // Send shipping confirmation to purchaser
+                MGC_Email::get_instance()->send_shipping_confirmation($code, $order);
+                break;
+        }
+
+        // Log the creation with delivery method
+        $delivery_labels = [
+            'digital' => __('Digital', 'massnahme-gift-cards'),
+            'pickup' => __('Store Pickup', 'massnahme-gift-cards'),
+            'shipping' => __('Shipping', 'massnahme-gift-cards')
+        ];
+
         $order->add_order_note(
-            sprintf(__('Gift card created: %s (Amount: %s)', 'massnahme-gift-cards'), 
-                $code, 
-                wc_price($amount)
+            sprintf(__('Gift card created: %s (Amount: %s, Delivery: %s)', 'massnahme-gift-cards'),
+                $code,
+                wc_price($amount),
+                $delivery_labels[$delivery_method] ?? $delivery_method
             )
         );
     }
@@ -193,6 +239,12 @@ class MGC_Core {
     }
     
     public function save_checkout_fields($order, $data) {
+        // Delivery method
+        if (isset($_POST['mgc_delivery_method'])) {
+            $order->update_meta_data('_mgc_delivery_method', sanitize_text_field($_POST['mgc_delivery_method']));
+        }
+
+        // Digital delivery fields
         if (isset($_POST['mgc_recipient_email'])) {
             $order->update_meta_data('_mgc_recipient_email', sanitize_email($_POST['mgc_recipient_email']));
         }
@@ -201,6 +253,21 @@ class MGC_Core {
         }
         if (isset($_POST['mgc_delivery_date'])) {
             $order->update_meta_data('_mgc_delivery_date', sanitize_text_field($_POST['mgc_delivery_date']));
+        }
+
+        // Pickup fields
+        if (isset($_POST['mgc_pickup_location'])) {
+            $order->update_meta_data('_mgc_pickup_location', sanitize_text_field($_POST['mgc_pickup_location']));
+        }
+
+        // Recipient name (for pickup/shipping)
+        if (isset($_POST['mgc_recipient_name'])) {
+            $order->update_meta_data('_mgc_recipient_name', sanitize_text_field($_POST['mgc_recipient_name']));
+        }
+
+        // Clear the session delivery method
+        if (isset($_SESSION['mgc_delivery_method'])) {
+            unset($_SESSION['mgc_delivery_method']);
         }
     }
     
@@ -234,10 +301,61 @@ class MGC_Core {
                 true
             );
 
+            $settings = get_option('mgc_settings', []);
             wp_localize_script('mgc-frontend', 'mgc_ajax', [
                 'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('mgc_nonce')
+                'nonce' => wp_create_nonce('mgc_nonce'),
+                'shipping_cost' => floatval($settings['shipping_cost'] ?? 9.95),
+                'shipping_enabled' => !empty($settings['enable_shipping'])
             ]);
+        }
+    }
+
+    /**
+     * AJAX handler for setting delivery method in session
+     */
+    public function ajax_set_delivery_method() {
+        check_ajax_referer('mgc_nonce', 'nonce');
+
+        $method = sanitize_text_field($_POST['method'] ?? 'digital');
+
+        if (in_array($method, ['digital', 'pickup', 'shipping'])) {
+            $_SESSION['mgc_delivery_method'] = $method;
+            wp_send_json_success(['method' => $method]);
+        } else {
+            wp_send_json_error(__('Invalid delivery method', 'massnahme-gift-cards'));
+        }
+    }
+
+    /**
+     * Add shipping fee for gift card when shipping delivery is selected
+     */
+    public function add_gift_card_shipping_fee($cart) {
+        if (is_admin() && !defined('DOING_AJAX')) {
+            return;
+        }
+
+        // Check if cart has gift card
+        if (!$this->cart_has_gift_card()) {
+            return;
+        }
+
+        // Check if shipping method is selected
+        $delivery_method = $_SESSION['mgc_delivery_method'] ?? 'digital';
+
+        if ($delivery_method !== 'shipping') {
+            return;
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $shipping_cost = floatval($settings['shipping_cost'] ?? 9.95);
+
+        if ($shipping_cost > 0) {
+            $cart->add_fee(
+                __('Gift Card Luxury Shipping', 'massnahme-gift-cards'),
+                $shipping_cost,
+                true // taxable
+            );
         }
     }
     
