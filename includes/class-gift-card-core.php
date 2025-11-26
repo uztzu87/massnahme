@@ -47,6 +47,7 @@ class MGC_Core {
         // Shortcodes
         add_shortcode('massnahme_gift_balance', [$this, 'balance_checker_shortcode']);
         add_shortcode('massnahme_staff_redemption', [$this, 'staff_redemption_shortcode']);
+        add_shortcode('massnahme_admin_dashboard', [$this, 'admin_dashboard_shortcode']);
 
         // Frontend staff AJAX handlers (for logged-in staff)
         add_action('wp_ajax_mgc_frontend_staff_lookup', [$this, 'ajax_frontend_staff_lookup']);
@@ -290,16 +291,22 @@ class MGC_Core {
     private function generate_unique_code() {
         $settings = get_option('mgc_settings');
         $prefix = $settings['code_prefix'] ?: 'MASS';
-        
+
         do {
+            // Generate a numeric-only code for better compatibility
+            // Format: PREFIX-YEAR-RANDOMNUMBERS (e.g., MASS-2025-847392)
+            $random_numbers = '';
+            for ($i = 0; $i < 6; $i++) {
+                $random_numbers .= mt_rand(0, 9);
+            }
             $code = sprintf(
                 '%s-%d-%s',
                 $prefix,
                 date('Y'),
-                strtoupper(wp_generate_password(6, false))
+                $random_numbers
             );
         } while ($this->code_exists($code));
-        
+
         return $code;
     }
     
@@ -756,6 +763,13 @@ class MGC_Core {
             $store_name = $store['name'] ?? '';
         }
 
+        // Log the lookup activity
+        $this->log_admin_activity(
+            'lookup',
+            sprintf(__('Looked up gift card %s (Balance: %s)', 'massnahme-gift-cards'), $code, wc_price($gift_card->balance)),
+            $code
+        );
+
         wp_send_json_success([
             'code' => $gift_card->code,
             'amount' => floatval($gift_card->amount),
@@ -858,6 +872,13 @@ class MGC_Core {
 
             $wpdb->query('COMMIT');
 
+            // Log the redemption activity
+            $this->log_admin_activity(
+                'redemption',
+                sprintf(__('Redeemed %s from gift card (New balance: %s)', 'massnahme-gift-cards'), wc_price($redeem_amount), wc_price($new_balance)),
+                $code
+            );
+
             wp_send_json_success([
                 'message' => __('Redemption successful', 'massnahme-gift-cards'),
                 'redeemed' => $redeem_amount,
@@ -932,6 +953,13 @@ class MGC_Core {
             'collected' => __('Collected', 'massnahme-gift-cards')
         ];
 
+        // Log the status change activity
+        $this->log_admin_activity(
+            'status_change',
+            sprintf(__('Changed pickup status to "%s"', 'massnahme-gift-cards'), $status_labels[$status]),
+            $code
+        );
+
         wp_send_json_success([
             'status' => $status,
             'status_label' => $status_labels[$status]
@@ -975,5 +1003,57 @@ class MGC_Core {
         ];
 
         wp_mail($to, $subject, $message, $headers);
+    }
+
+    /**
+     * Admin dashboard shortcode for frontend
+     */
+    public function admin_dashboard_shortcode($atts) {
+        ob_start();
+        include MGC_PLUGIN_DIR . 'templates/frontend-admin-dashboard.php';
+        return ob_get_clean();
+    }
+
+    /**
+     * Log admin activity
+     */
+    public function log_admin_activity($action_type, $action_details, $gift_card_code = null) {
+        if (!is_user_logged_in()) {
+            return false;
+        }
+
+        $current_user = wp_get_current_user();
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_admin_activity';
+
+        // Check if table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") === $table;
+        if (!$table_exists) {
+            return false;
+        }
+
+        return $wpdb->insert(
+            $table,
+            [
+                'user_id' => $current_user->ID,
+                'user_login' => $current_user->user_login,
+                'user_display_name' => $current_user->display_name,
+                'action_type' => $action_type,
+                'action_details' => $action_details,
+                'gift_card_code' => $gift_card_code,
+                'ip_address' => $this->get_client_ip(),
+                'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 500) : '',
+                'created_at' => current_time('mysql')
+            ],
+            ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+        );
+    }
+
+    /**
+     * Public method to get client IP
+     */
+    public function get_client_ip_public() {
+        return $this->get_client_ip();
     }
 }

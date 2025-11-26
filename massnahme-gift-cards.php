@@ -233,6 +233,28 @@ function mgc_create_tables() {
 
     // Run migration for existing installations
     mgc_migrate_delivery_columns();
+
+    // Create admin activity log table
+    $activity_table = $wpdb->prefix . 'mgc_admin_activity';
+    $sql3 = "CREATE TABLE $activity_table (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) NOT NULL,
+        user_login varchar(60) NOT NULL,
+        user_display_name varchar(250) NOT NULL,
+        action_type varchar(50) NOT NULL,
+        action_details text NOT NULL,
+        gift_card_code varchar(50) DEFAULT NULL,
+        ip_address varchar(45) DEFAULT NULL,
+        user_agent text DEFAULT NULL,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY user_id (user_id),
+        KEY action_type (action_type),
+        KEY gift_card_code (gift_card_code),
+        KEY created_at (created_at)
+    ) $charset_collate;";
+
+    dbDelta($sql3);
 }
 
 /**
