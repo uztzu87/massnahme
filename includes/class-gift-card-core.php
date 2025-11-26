@@ -60,6 +60,34 @@ class MGC_Core {
         add_filter('woocommerce_get_item_data', [$this, 'display_custom_amount_in_cart'], 10, 2);
         add_action('woocommerce_checkout_create_order_line_item', [$this, 'save_custom_amount_to_order'], 10, 4);
         add_filter('woocommerce_add_to_cart_validation', [$this, 'validate_custom_amount'], 10, 3);
+
+        // Ensure custom amount product exists when enabled
+        add_action('init', [$this, 'maybe_create_custom_amount_product'], 20);
+    }
+
+    /**
+     * Create custom amount product if enabled and doesn't exist
+     */
+    public function maybe_create_custom_amount_product() {
+        $settings = get_option('mgc_settings', []);
+
+        // Only create if feature is enabled
+        if (empty($settings['enable_custom_amount'])) {
+            return;
+        }
+
+        // Check if product already exists
+        $existing = wc_get_products([
+            'sku' => 'MGC-CUSTOM',
+            'limit' => 1
+        ]);
+
+        if (!empty($existing)) {
+            return;
+        }
+
+        // Create the product
+        $this->create_custom_amount_product();
     }
 
     public function start_session() {
