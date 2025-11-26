@@ -101,6 +101,10 @@ class MGC_Admin {
                 'code_prefix' => sanitize_text_field($_POST['code_prefix']),
                 'enable_pdf' => isset($_POST['enable_pdf']),
                 'enable_qr' => isset($_POST['enable_qr']),
+                // Custom amount settings
+                'enable_custom_amount' => isset($_POST['enable_custom_amount']),
+                'custom_min_amount' => max(1, intval($_POST['custom_min_amount'] ?? 50)),
+                'custom_max_amount' => max(1, intval($_POST['custom_max_amount'] ?? 300)),
                 // Delivery options
                 'enable_digital' => isset($_POST['enable_digital']),
                 'enable_pickup' => isset($_POST['enable_pickup']),

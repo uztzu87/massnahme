@@ -52,6 +52,14 @@ class MGC_Core {
 
         // Start session for delivery method tracking
         add_action('init', [$this, 'start_session'], 1);
+
+        // Custom amount product hooks
+        add_action('woocommerce_before_add_to_cart_button', [$this, 'display_custom_amount_field']);
+        add_filter('woocommerce_add_cart_item_data', [$this, 'add_custom_amount_to_cart'], 10, 3);
+        add_action('woocommerce_before_calculate_totals', [$this, 'set_custom_cart_item_price'], 20, 1);
+        add_filter('woocommerce_get_item_data', [$this, 'display_custom_amount_in_cart'], 10, 2);
+        add_action('woocommerce_checkout_create_order_line_item', [$this, 'save_custom_amount_to_order'], 10, 4);
+        add_filter('woocommerce_add_to_cart_validation', [$this, 'validate_custom_amount'], 10, 3);
     }
 
     public function start_session() {
@@ -65,7 +73,8 @@ class MGC_Core {
         if (get_option('mgc_products_created') === 'yes') {
             return;
         }
-        
+
+        // Premium fixed-tier products
         $products = [
             500 => __('Gift Card €500', 'massnahme-gift-cards'),
             1000 => __('Gift Card €1,000', 'massnahme-gift-cards'),
@@ -73,12 +82,53 @@ class MGC_Core {
             2000 => __('Gift Card €2,000', 'massnahme-gift-cards'),
             3000 => __('Gift Card €3,000', 'massnahme-gift-cards')
         ];
-        
+
         foreach ($products as $amount => $title) {
             $this->create_single_product($amount, $title);
         }
-        
+
+        // Create custom amount product
+        $this->create_custom_amount_product();
+
         update_option('mgc_products_created', 'yes');
+    }
+
+    /**
+     * Create the custom amount gift card product
+     */
+    private function create_custom_amount_product() {
+        // Check if exists
+        $existing = wc_get_products([
+            'sku' => 'MGC-CUSTOM',
+            'limit' => 1
+        ]);
+
+        if (!empty($existing)) {
+            return;
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $min_amount = $settings['custom_min_amount'] ?? 50;
+
+        $product = new WC_Product_Simple();
+        $product->set_name(__('Custom Gift Card', 'massnahme-gift-cards'));
+        $product->set_sku('MGC-CUSTOM');
+        $product->set_regular_price($min_amount); // Default price, will be overridden
+        $product->set_tax_status('taxable');
+        $product->set_tax_class('standard');
+        $product->set_catalog_visibility('visible');
+        $product->set_virtual(true);
+        $product->set_sold_individually(false);
+        $product->set_manage_stock(false);
+        $product->set_stock_status('instock');
+        $product->set_description(__('Choose your own gift card amount. Perfect for any occasion.', 'massnahme-gift-cards'));
+        $product->set_short_description(__('Create a personalized gift card with your chosen amount.', 'massnahme-gift-cards'));
+
+        // Add meta to identify as custom amount gift card
+        $product->add_meta_data('_mgc_gift_card', 'yes', true);
+        $product->add_meta_data('_mgc_custom_amount', 'yes', true);
+
+        $product->save();
     }
     
     private function create_single_product($amount, $title) {
@@ -452,5 +502,139 @@ class MGC_Core {
         ob_start();
         wc_get_template('balance-checker.php', [], '', MGC_PLUGIN_DIR . 'templates/');
         return ob_get_clean();
+    }
+
+    /**
+     * Check if product is a custom amount gift card
+     */
+    private function is_custom_amount_product($product) {
+        if (!$product) {
+            return false;
+        }
+        return $product->get_meta('_mgc_custom_amount') === 'yes';
+    }
+
+    /**
+     * Display custom amount input field on product page
+     */
+    public function display_custom_amount_field() {
+        global $product;
+
+        if (!$this->is_custom_amount_product($product)) {
+            return;
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $min_amount = floatval($settings['custom_min_amount'] ?? 50);
+        $max_amount = floatval($settings['custom_max_amount'] ?? 300);
+        $currency_symbol = get_woocommerce_currency_symbol();
+
+        wc_get_template(
+            'single-product/custom-amount.php',
+            [
+                'min_amount' => $min_amount,
+                'max_amount' => $max_amount,
+                'currency_symbol' => $currency_symbol,
+                'default_amount' => $min_amount
+            ],
+            '',
+            MGC_PLUGIN_DIR . 'templates/'
+        );
+    }
+
+    /**
+     * Validate custom amount before adding to cart
+     */
+    public function validate_custom_amount($passed, $product_id, $quantity) {
+        $product = wc_get_product($product_id);
+
+        if (!$this->is_custom_amount_product($product)) {
+            return $passed;
+        }
+
+        $custom_amount = isset($_POST['mgc_custom_amount']) ? floatval($_POST['mgc_custom_amount']) : 0;
+
+        $settings = get_option('mgc_settings', []);
+        $min_amount = floatval($settings['custom_min_amount'] ?? 50);
+        $max_amount = floatval($settings['custom_max_amount'] ?? 300);
+
+        if ($custom_amount < $min_amount) {
+            wc_add_notice(
+                sprintf(__('Minimum gift card amount is %s', 'massnahme-gift-cards'), wc_price($min_amount)),
+                'error'
+            );
+            return false;
+        }
+
+        if ($custom_amount > $max_amount) {
+            wc_add_notice(
+                sprintf(__('Maximum gift card amount is %s', 'massnahme-gift-cards'), wc_price($max_amount)),
+                'error'
+            );
+            return false;
+        }
+
+        return $passed;
+    }
+
+    /**
+     * Add custom amount to cart item data
+     */
+    public function add_custom_amount_to_cart($cart_item_data, $product_id, $variation_id) {
+        $product = wc_get_product($product_id);
+
+        if (!$this->is_custom_amount_product($product)) {
+            return $cart_item_data;
+        }
+
+        if (isset($_POST['mgc_custom_amount']) && !empty($_POST['mgc_custom_amount'])) {
+            $custom_amount = floatval($_POST['mgc_custom_amount']);
+            $cart_item_data['mgc_custom_amount'] = $custom_amount;
+            // Create unique cart item key to allow multiple custom amounts
+            $cart_item_data['unique_key'] = md5(microtime() . rand());
+        }
+
+        return $cart_item_data;
+    }
+
+    /**
+     * Set custom price for cart item
+     */
+    public function set_custom_cart_item_price($cart) {
+        if (is_admin() && !defined('DOING_AJAX')) {
+            return;
+        }
+
+        if (did_action('woocommerce_before_calculate_totals') >= 2) {
+            return;
+        }
+
+        foreach ($cart->get_cart() as $cart_item) {
+            if (isset($cart_item['mgc_custom_amount'])) {
+                $cart_item['data']->set_price($cart_item['mgc_custom_amount']);
+            }
+        }
+    }
+
+    /**
+     * Display custom amount in cart and checkout
+     */
+    public function display_custom_amount_in_cart($item_data, $cart_item) {
+        if (isset($cart_item['mgc_custom_amount'])) {
+            $item_data[] = [
+                'key' => __('Gift Card Amount', 'massnahme-gift-cards'),
+                'value' => wc_price($cart_item['mgc_custom_amount'])
+            ];
+        }
+        return $item_data;
+    }
+
+    /**
+     * Save custom amount to order item meta
+     */
+    public function save_custom_amount_to_order($item, $cart_item_key, $values, $order) {
+        if (isset($values['mgc_custom_amount'])) {
+            $item->add_meta_data('_mgc_custom_amount', $values['mgc_custom_amount'], true);
+        }
     }
 }
