@@ -361,34 +361,91 @@ class MGC_Core {
     
     public function ajax_validate_code() {
         check_ajax_referer('mgc_nonce', 'nonce');
-        
-        $code = sanitize_text_field($_POST['code']);
-        
+
+        // Rate limiting to prevent brute force attacks
+        $ip_address = $this->get_client_ip();
+        $rate_limit_key = 'mgc_rate_limit_' . md5($ip_address);
+        $attempts = get_transient($rate_limit_key);
+
+        // Allow 10 attempts per 5 minutes
+        $max_attempts = 10;
+        $lockout_duration = 5 * MINUTE_IN_SECONDS;
+
+        if ($attempts !== false && $attempts >= $max_attempts) {
+            wp_send_json_error(__('Too many attempts. Please try again later.', 'massnahme-gift-cards'));
+        }
+
+        $code = sanitize_text_field($_POST['code'] ?? '');
+
+        if (empty($code)) {
+            wp_send_json_error(__('Please enter a gift card code', 'massnahme-gift-cards'));
+        }
+
         global $wpdb;
         $table = $wpdb->prefix . 'mgc_gift_cards';
-        
+
         $gift_card = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM $table WHERE code = %s",
             $code
         ));
-        
+
         if (!$gift_card) {
+            // Increment failed attempts
+            $this->increment_rate_limit($rate_limit_key, $lockout_duration);
             wp_send_json_error(__('Invalid gift card code', 'massnahme-gift-cards'));
         }
-        
+
         if ($gift_card->status !== 'active') {
             wp_send_json_error(__('This gift card has been used', 'massnahme-gift-cards'));
         }
-        
+
         if (strtotime($gift_card->expires_at) < time()) {
             wp_send_json_error(__('This gift card has expired', 'massnahme-gift-cards'));
         }
-        
+
+        // Successful validation - reset rate limit for this IP
+        delete_transient($rate_limit_key);
+
         wp_send_json_success([
             'balance' => $gift_card->balance,
             'expires' => date_i18n(get_option('date_format'), strtotime($gift_card->expires_at)),
             'message' => sprintf(__('Balance: %s', 'massnahme-gift-cards'), wc_price($gift_card->balance))
         ]);
+    }
+
+    /**
+     * Get client IP address
+     */
+    private function get_client_ip() {
+        $ip_keys = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR'];
+
+        foreach ($ip_keys as $key) {
+            if (!empty($_SERVER[$key])) {
+                $ip = $_SERVER[$key];
+                // Handle comma-separated IPs (X-Forwarded-For)
+                if (strpos($ip, ',') !== false) {
+                    $ip = trim(explode(',', $ip)[0]);
+                }
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+
+        return '0.0.0.0';
+    }
+
+    /**
+     * Increment rate limit counter
+     */
+    private function increment_rate_limit($key, $duration) {
+        $attempts = get_transient($key);
+
+        if ($attempts === false) {
+            set_transient($key, 1, $duration);
+        } else {
+            set_transient($key, $attempts + 1, $duration);
+        }
     }
     
     public function balance_checker_shortcode() {
