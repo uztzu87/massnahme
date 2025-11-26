@@ -46,6 +46,12 @@ class MGC_Core {
 
         // Shortcodes
         add_shortcode('massnahme_gift_balance', [$this, 'balance_checker_shortcode']);
+        add_shortcode('massnahme_staff_redemption', [$this, 'staff_redemption_shortcode']);
+
+        // Frontend staff AJAX handlers (for logged-in staff)
+        add_action('wp_ajax_mgc_frontend_staff_lookup', [$this, 'ajax_frontend_staff_lookup']);
+        add_action('wp_ajax_mgc_frontend_redeem', [$this, 'ajax_frontend_redeem']);
+        add_action('wp_ajax_mgc_frontend_update_pickup_status', [$this, 'ajax_frontend_update_pickup_status']);
 
         // Add shipping fee for gift card delivery
         add_action('woocommerce_cart_calculate_fees', [$this, 'add_gift_card_shipping_fee']);
@@ -664,5 +670,310 @@ class MGC_Core {
         if (isset($values['mgc_custom_amount'])) {
             $item->add_meta_data('_mgc_custom_amount', $values['mgc_custom_amount'], true);
         }
+    }
+
+    /**
+     * Staff redemption shortcode for frontend POS
+     */
+    public function staff_redemption_shortcode($atts) {
+        // Check if user is logged in and has permission
+        if (!is_user_logged_in()) {
+            return '<div class="mgc-staff-login-required">' .
+                   '<p>' . __('Please log in to access the staff redemption system.', 'massnahme-gift-cards') . '</p>' .
+                   '<a href="' . esc_url(wp_login_url(get_permalink())) . '" class="button">' . __('Log In', 'massnahme-gift-cards') . '</a>' .
+                   '</div>';
+        }
+
+        if (!current_user_can('manage_woocommerce')) {
+            return '<div class="mgc-staff-no-permission">' .
+                   '<p>' . __('You do not have permission to access this page.', 'massnahme-gift-cards') . '</p>' .
+                   '</div>';
+        }
+
+        // Enqueue the staff redemption scripts
+        wp_enqueue_script('mgc-staff-redemption');
+
+        ob_start();
+        include MGC_PLUGIN_DIR . 'templates/frontend-staff-redemption.php';
+        return ob_get_clean();
+    }
+
+    /**
+     * AJAX: Frontend staff lookup
+     */
+    public function ajax_frontend_staff_lookup() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'mgc_frontend_nonce')) {
+            wp_send_json_error(__('Security check failed', 'massnahme-gift-cards'));
+        }
+
+        // Check permission
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field(strtoupper($_POST['code'])) : '';
+
+        if (empty($code)) {
+            wp_send_json_error(__('Please enter a gift card code', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+        $usage_table = $wpdb->prefix . 'mgc_gift_card_usage';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+        }
+
+        // Get transaction history
+        $history = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $usage_table WHERE gift_card_code = %s ORDER BY used_at DESC LIMIT 10",
+            $code
+        ));
+
+        $history_data = [];
+        foreach ($history as $item) {
+            $history_data[] = [
+                'date' => date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($item->used_at)),
+                'amount' => floatval($item->amount_used),
+                'order_id' => intval($item->order_id),
+                'remaining' => floatval($item->remaining_balance)
+            ];
+        }
+
+        // Get store name if pickup
+        $store_name = '';
+        if ($gift_card->delivery_method === 'pickup' && $gift_card->pickup_location !== null) {
+            $settings = get_option('mgc_settings', []);
+            $store_locations = $settings['store_locations'] ?? [];
+            $store = $store_locations[$gift_card->pickup_location] ?? null;
+            $store_name = $store['name'] ?? '';
+        }
+
+        wp_send_json_success([
+            'code' => $gift_card->code,
+            'amount' => floatval($gift_card->amount),
+            'balance' => floatval($gift_card->balance),
+            'status' => $gift_card->status,
+            'recipient_email' => $gift_card->recipient_email,
+            'recipient_name' => $gift_card->recipient_name ?? '',
+            'delivery_method' => $gift_card->delivery_method ?? 'digital',
+            'pickup_location' => $gift_card->pickup_location ?? '',
+            'pickup_status' => $gift_card->pickup_status ?? 'ordered',
+            'store_name' => $store_name,
+            'expires_at' => date_i18n(get_option('date_format'), strtotime($gift_card->expires_at)),
+            'created_at' => date_i18n(get_option('date_format'), strtotime($gift_card->created_at)),
+            'history' => $history_data
+        ]);
+    }
+
+    /**
+     * AJAX: Frontend staff redeem
+     */
+    public function ajax_frontend_redeem() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'mgc_frontend_nonce')) {
+            wp_send_json_error(__('Security check failed', 'massnahme-gift-cards'));
+        }
+
+        // Check permission
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field($_POST['code']) : '';
+        $redeem_amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+
+        if (empty($code)) {
+            wp_send_json_error(__('Invalid gift card code', 'massnahme-gift-cards'));
+        }
+
+        if ($redeem_amount <= 0) {
+            wp_send_json_error(__('Invalid redemption amount', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        // Use transaction for safety
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            $gift_card = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table WHERE code = %s FOR UPDATE",
+                $code
+            ));
+
+            if (!$gift_card) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+            }
+
+            $current_balance = floatval($gift_card->balance);
+
+            if ($redeem_amount > $current_balance) {
+                $wpdb->query('ROLLBACK');
+                wp_send_json_error(__('Insufficient balance', 'massnahme-gift-cards'));
+            }
+
+            $new_balance = $current_balance - $redeem_amount;
+            $new_status = $new_balance > 0 ? 'active' : 'used';
+
+            // Update balance
+            $wpdb->update(
+                $table,
+                [
+                    'balance' => $new_balance,
+                    'status' => $new_status
+                ],
+                ['code' => $code],
+                ['%f', '%s'],
+                ['%s']
+            );
+
+            // Log the redemption
+            $wpdb->insert(
+                $wpdb->prefix . 'mgc_gift_card_usage',
+                [
+                    'gift_card_code' => $code,
+                    'order_id' => 0, // 0 = manual/POS redemption
+                    'amount_used' => $redeem_amount,
+                    'remaining_balance' => $new_balance,
+                    'used_at' => current_time('mysql')
+                ]
+            );
+
+            // Update WooCommerce coupon if exists
+            $coupon = new WC_Coupon($code);
+            if ($coupon->get_id()) {
+                $coupon->update_meta_data('_mgc_balance', $new_balance);
+                $coupon->save();
+            }
+
+            $wpdb->query('COMMIT');
+
+            wp_send_json_success([
+                'message' => __('Redemption successful', 'massnahme-gift-cards'),
+                'redeemed' => $redeem_amount,
+                'new_balance' => $new_balance,
+                'new_status' => $new_status,
+                'formatted_balance' => strip_tags(wc_price($new_balance))
+            ]);
+
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            wp_send_json_error(__('Error processing redemption', 'massnahme-gift-cards'));
+        }
+    }
+
+    /**
+     * AJAX: Frontend update pickup status
+     */
+    public function ajax_frontend_update_pickup_status() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'mgc_frontend_nonce')) {
+            wp_send_json_error(__('Security check failed', 'massnahme-gift-cards'));
+        }
+
+        // Check permission
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field($_POST['code']) : '';
+        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : '';
+
+        $valid_statuses = ['ordered', 'preparing', 'ready', 'collected'];
+        if (!in_array($status, $valid_statuses)) {
+            wp_send_json_error(__('Invalid status', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+        }
+
+        $old_status = $gift_card->pickup_status;
+
+        $updated = $wpdb->update(
+            $table,
+            ['pickup_status' => $status],
+            ['code' => $code],
+            ['%s'],
+            ['%s']
+        );
+
+        if ($updated === false) {
+            wp_send_json_error(__('Failed to update status', 'massnahme-gift-cards'));
+        }
+
+        // Send notification when marked as ready
+        if ($status === 'ready' && $old_status !== 'ready') {
+            $this->send_ready_for_pickup_email($gift_card);
+        }
+
+        $status_labels = [
+            'ordered' => __('Ordered', 'massnahme-gift-cards'),
+            'preparing' => __('Preparing', 'massnahme-gift-cards'),
+            'ready' => __('Ready for Pickup', 'massnahme-gift-cards'),
+            'collected' => __('Collected', 'massnahme-gift-cards')
+        ];
+
+        wp_send_json_success([
+            'status' => $status,
+            'status_label' => $status_labels[$status]
+        ]);
+    }
+
+    /**
+     * Send ready for pickup email notification
+     */
+    private function send_ready_for_pickup_email($gift_card) {
+        $settings = get_option('mgc_settings', []);
+        $store_locations = $settings['store_locations'] ?? [];
+        $store = $store_locations[$gift_card->pickup_location] ?? null;
+
+        $to = $gift_card->purchaser_email;
+        $subject = sprintf(
+            __('Your Gift Card is Ready for Pickup - %s', 'massnahme-gift-cards'),
+            get_bloginfo('name')
+        );
+
+        $store_info = '';
+        if ($store) {
+            $store_info = sprintf(
+                "\n\n%s\n%s\n%s",
+                $store['name'] ?? '',
+                $store['address'] ?? '',
+                $store['hours'] ?? ''
+            );
+        }
+
+        $message = sprintf(
+            __("Great news! Your gift card (Code: %s) is now ready for pickup.%s\n\nPlease bring a valid ID when collecting your gift card.\n\nThank you for shopping with %s!", 'massnahme-gift-cards'),
+            $gift_card->code,
+            $store_info,
+            get_bloginfo('name')
+        );
+
+        $headers = [
+            'Content-Type: text/plain; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        wp_mail($to, $subject, $message, $headers);
     }
 }
