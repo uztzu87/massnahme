@@ -26,6 +26,8 @@ class MGC_Admin {
 
         // AJAX handlers
         add_action('wp_ajax_mgc_update_balance', [$this, 'ajax_update_balance']);
+        add_action('wp_ajax_mgc_staff_lookup', [$this, 'ajax_staff_lookup']);
+        add_action('wp_ajax_mgc_update_pickup_status', [$this, 'ajax_update_pickup_status']);
     }
     
     public function add_menu_pages() {
@@ -59,12 +61,25 @@ class MGC_Admin {
         
         add_submenu_page(
             'mgc-gift-cards',
+            __('Pickup Orders', 'massnahme-gift-cards'),
+            __('Pickup Orders', 'massnahme-gift-cards'),
+            'manage_woocommerce',
+            'mgc-pickup-orders',
+            [$this, 'pickup_orders_page']
+        );
+
+        add_submenu_page(
+            'mgc-gift-cards',
             __('Settings', 'massnahme-gift-cards'),
             __('Settings', 'massnahme-gift-cards'),
             'manage_woocommerce',
             'mgc-settings',
             [$this, 'settings_page']
         );
+    }
+
+    public function pickup_orders_page() {
+        require_once MGC_PLUGIN_DIR . 'templates/admin-pickup-orders.php';
     }
     
     public function dashboard_page() {
@@ -153,6 +168,7 @@ class MGC_Admin {
     public function add_screen_ids($screen_ids) {
         $screen_ids[] = 'toplevel_page_mgc-gift-cards';
         $screen_ids[] = 'gift-cards_page_mgc-validate';
+        $screen_ids[] = 'gift-cards_page_mgc-pickup-orders';
         $screen_ids[] = 'gift-cards_page_mgc-settings';
         return $screen_ids;
     }
@@ -243,5 +259,167 @@ class MGC_Admin {
             'new_status' => $new_status,
             'formatted_balance' => wc_price($new_balance)
         ]);
+    }
+
+    /**
+     * AJAX handler for staff gift card lookup
+     */
+    public function ajax_staff_lookup() {
+        check_ajax_referer('mgc_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field(strtoupper($_POST['code'])) : '';
+
+        if (empty($code)) {
+            wp_send_json_error(__('Please enter a gift card code', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+        $usage_table = $wpdb->prefix . 'mgc_gift_card_usage';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+        }
+
+        // Get transaction history
+        $history = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $usage_table WHERE gift_card_code = %s ORDER BY used_at DESC LIMIT 10",
+            $code
+        ));
+
+        $history_data = [];
+        foreach ($history as $item) {
+            $history_data[] = [
+                'date' => date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($item->used_at)),
+                'amount' => floatval($item->amount_used),
+                'order_id' => intval($item->order_id),
+                'remaining' => floatval($item->remaining_balance)
+            ];
+        }
+
+        wp_send_json_success([
+            'code' => $gift_card->code,
+            'amount' => floatval($gift_card->amount),
+            'balance' => floatval($gift_card->balance),
+            'status' => $gift_card->status,
+            'recipient_email' => $gift_card->recipient_email,
+            'recipient_name' => $gift_card->recipient_name ?? '',
+            'delivery_method' => $gift_card->delivery_method ?? 'digital',
+            'pickup_location' => $gift_card->pickup_location ?? '',
+            'pickup_status' => $gift_card->pickup_status ?? 'ordered',
+            'expires_at' => date_i18n(get_option('date_format'), strtotime($gift_card->expires_at)),
+            'created_at' => date_i18n(get_option('date_format'), strtotime($gift_card->created_at)),
+            'history' => $history_data
+        ]);
+    }
+
+    /**
+     * AJAX handler for updating pickup status
+     */
+    public function ajax_update_pickup_status() {
+        check_ajax_referer('mgc_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        $code = isset($_POST['code']) ? sanitize_text_field($_POST['code']) : '';
+        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : '';
+
+        $valid_statuses = ['ordered', 'preparing', 'ready', 'collected'];
+        if (!in_array($status, $valid_statuses)) {
+            wp_send_json_error(__('Invalid status', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            wp_send_json_error(__('Gift card not found', 'massnahme-gift-cards'));
+        }
+
+        $old_status = $gift_card->pickup_status;
+
+        $updated = $wpdb->update(
+            $table,
+            ['pickup_status' => $status],
+            ['code' => $code],
+            ['%s'],
+            ['%s']
+        );
+
+        if ($updated === false) {
+            wp_send_json_error(__('Failed to update status', 'massnahme-gift-cards'));
+        }
+
+        // Send notification email when status changes to "ready"
+        if ($status === 'ready' && $old_status !== 'ready') {
+            $this->send_ready_for_pickup_notification($gift_card);
+        }
+
+        $status_labels = [
+            'ordered' => __('Ordered', 'massnahme-gift-cards'),
+            'preparing' => __('Preparing', 'massnahme-gift-cards'),
+            'ready' => __('Ready for Pickup', 'massnahme-gift-cards'),
+            'collected' => __('Collected', 'massnahme-gift-cards')
+        ];
+
+        wp_send_json_success([
+            'status' => $status,
+            'status_label' => $status_labels[$status]
+        ]);
+    }
+
+    /**
+     * Send notification when gift card is ready for pickup
+     */
+    private function send_ready_for_pickup_notification($gift_card) {
+        $settings = get_option('mgc_settings', []);
+        $store_locations = $settings['store_locations'] ?? [];
+        $store = $store_locations[$gift_card->pickup_location] ?? null;
+
+        $to = $gift_card->purchaser_email;
+        $subject = sprintf(
+            __('Your Gift Card is Ready for Pickup - %s', 'massnahme-gift-cards'),
+            get_bloginfo('name')
+        );
+
+        $store_info = '';
+        if ($store) {
+            $store_info = sprintf(
+                "\n\n%s\n%s\n%s",
+                $store['name'] ?? '',
+                $store['address'] ?? '',
+                $store['hours'] ?? ''
+            );
+        }
+
+        $message = sprintf(
+            __("Great news! Your gift card (Code: %s) is now ready for pickup.%s\n\nPlease bring a valid ID when collecting your gift card.\n\nThank you for shopping with %s!", 'massnahme-gift-cards'),
+            $gift_card->code,
+            $store_info,
+            get_bloginfo('name')
+        );
+
+        $headers = [
+            'Content-Type: text/plain; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        wp_mail($to, $subject, $message, $headers);
     }
 }

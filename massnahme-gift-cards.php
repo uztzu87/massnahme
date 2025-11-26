@@ -255,4 +255,15 @@ function mgc_migrate_delivery_columns() {
         $wpdb->query("ALTER TABLE `$table_name` ADD COLUMN `recipient_name` varchar(100) DEFAULT NULL AFTER `recipient_email`");
         $wpdb->query("ALTER TABLE `$table_name` ADD INDEX `delivery_method` (`delivery_method`)");
     }
+
+    // Check if pickup_status column exists (Phase 4 - Store Notification System)
+    $pickup_status_exists = $wpdb->get_results($wpdb->prepare(
+        "SHOW COLUMNS FROM `$table_name` LIKE %s",
+        'pickup_status'
+    ));
+
+    if (empty($pickup_status_exists)) {
+        $wpdb->query("ALTER TABLE `$table_name` ADD COLUMN `pickup_status` varchar(20) DEFAULT NULL AFTER `pickup_location`");
+        $wpdb->query("ALTER TABLE `$table_name` ADD INDEX `pickup_status` (`pickup_status`)");
+    }
 }
