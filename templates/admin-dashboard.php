@@ -54,6 +54,15 @@ $recent_cards = $wpdb->get_results(
             <h2><?php _e('Recent Gift Cards', 'massnahme-gift-cards'); ?></h2>
 
             <?php if ($recent_cards): ?>
+                <?php
+                $settings = get_option('mgc_settings', []);
+                $store_locations = $settings['store_locations'] ?? [];
+                $delivery_labels = [
+                    'digital' => __('Digital', 'massnahme-gift-cards'),
+                    'pickup' => __('Store Pickup', 'massnahme-gift-cards'),
+                    'shipping' => __('Shipping', 'massnahme-gift-cards')
+                ];
+                ?>
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
                         <tr>
@@ -61,26 +70,45 @@ $recent_cards = $wpdb->get_results(
                             <th><?php _e('Amount', 'massnahme-gift-cards'); ?></th>
                             <th><?php _e('Balance', 'massnahme-gift-cards'); ?></th>
                             <th><?php _e('Recipient', 'massnahme-gift-cards'); ?></th>
+                            <th><?php _e('Delivery', 'massnahme-gift-cards'); ?></th>
                             <th><?php _e('Status', 'massnahme-gift-cards'); ?></th>
                             <th><?php _e('Created', 'massnahme-gift-cards'); ?></th>
-                            <th><?php _e('Expires', 'massnahme-gift-cards'); ?></th>
                             <th><?php _e('Actions', 'massnahme-gift-cards'); ?></th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php foreach ($recent_cards as $card): ?>
+                            <?php
+                            $delivery_method = $card->delivery_method ?? 'digital';
+                            $pickup_location = '';
+                            if ($delivery_method === 'pickup' && isset($card->pickup_location) && isset($store_locations[$card->pickup_location])) {
+                                $pickup_location = $store_locations[$card->pickup_location]['name'] ?? '';
+                            }
+                            ?>
                             <tr data-code="<?php echo esc_attr($card->code); ?>">
                                 <td><strong><?php echo esc_html($card->code); ?></strong></td>
                                 <td><?php echo wc_price($card->amount); ?></td>
                                 <td class="mgc-balance-cell"><?php echo wc_price($card->balance); ?></td>
-                                <td><?php echo esc_html($card->recipient_email); ?></td>
+                                <td>
+                                    <?php if (!empty($card->recipient_name)) : ?>
+                                        <strong><?php echo esc_html($card->recipient_name); ?></strong><br>
+                                    <?php endif; ?>
+                                    <span class="mgc-email"><?php echo esc_html($card->recipient_email); ?></span>
+                                </td>
+                                <td>
+                                    <span class="mgc-delivery mgc-delivery-<?php echo esc_attr($delivery_method); ?>">
+                                        <?php echo esc_html($delivery_labels[$delivery_method] ?? ucfirst($delivery_method)); ?>
+                                    </span>
+                                    <?php if ($pickup_location) : ?>
+                                        <br><small class="mgc-pickup-location"><?php echo esc_html($pickup_location); ?></small>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="mgc-status-cell">
                                     <span class="mgc-status mgc-status-<?php echo esc_attr($card->status); ?>">
                                         <?php echo esc_html(ucfirst($card->status)); ?>
                                     </span>
                                 </td>
                                 <td><?php echo date_i18n(get_option('date_format'), strtotime($card->created_at)); ?></td>
-                                <td><?php echo date_i18n(get_option('date_format'), strtotime($card->expires_at)); ?></td>
                                 <td>
                                     <button type="button" class="button button-small mgc-edit-balance"
                                         data-code="<?php echo esc_attr($card->code); ?>"
@@ -178,6 +206,40 @@ $recent_cards = $wpdb->get_results(
 .mgc-status-expired {
     background: #fff3cd;
     color: #856404;
+}
+
+/* Delivery method badges */
+.mgc-delivery {
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.mgc-delivery-digital {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+.mgc-delivery-pickup {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.mgc-delivery-shipping {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.mgc-pickup-location {
+    color: #666;
+    font-style: italic;
+}
+
+.mgc-email {
+    color: #666;
+    font-size: 12px;
 }
 
 /* Modal Styles */

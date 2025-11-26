@@ -213,13 +213,177 @@ class MGC_Email {
                 $data['purchaser_name'] ?? get_bloginfo('name')
             ),
             'purchase-confirmation' => __('Gift Card Purchase Confirmation', 'massnahme-gift-cards'),
-            'balance-update' => __('Gift Card Balance Update', 'massnahme-gift-cards')
+            'balance-update' => __('Gift Card Balance Update', 'massnahme-gift-cards'),
+            'store-pickup-notification' => sprintf(
+                __('[Action Required] Gift Card Pickup Order #%s', 'massnahme-gift-cards'),
+                $data['order_id'] ?? ''
+            ),
+            'pickup-confirmation' => __('Your Gift Card is Being Prepared for Pickup', 'massnahme-gift-cards'),
+            'shipping-confirmation' => __('Your Gift Card is Being Shipped', 'massnahme-gift-cards')
         ];
-        
-        return apply_filters('mgc_email_subject', 
+
+        return apply_filters('mgc_email_subject',
             $subjects[$template_name] ?? __('Gift Card', 'massnahme-gift-cards'),
             $template_name,
             $data
+        );
+    }
+
+    /**
+     * Send store pickup notification to store staff
+     */
+    public function send_store_pickup_notification($code, $order) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            return false;
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $store_locations = $settings['store_locations'] ?? [];
+        $pickup_location_id = $gift_card->pickup_location;
+
+        // Get the store location details
+        $store = $store_locations[$pickup_location_id] ?? null;
+
+        if (!$store || empty($store['email'])) {
+            // Fallback to admin email if no store email configured
+            $store_email = get_option('admin_email');
+        } else {
+            $store_email = $store['email'];
+        }
+
+        $email_data = [
+            'code' => $gift_card->code,
+            'amount' => $gift_card->amount,
+            'recipient_name' => $gift_card->recipient_name,
+            'message' => $gift_card->message,
+            'order_id' => $order->get_id(),
+            'customer_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+            'customer_email' => $order->get_billing_email(),
+            'customer_phone' => $order->get_billing_phone(),
+            'store' => $store,
+            'order' => $order
+        ];
+
+        $email_content = $this->get_email_template('store-pickup-notification', $email_data);
+
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        $sent = wp_mail(
+            $store_email,
+            $this->get_email_subject('store-pickup-notification', $email_data),
+            $email_content,
+            $headers
+        );
+
+        if ($sent) {
+            $order->add_order_note(sprintf(
+                __('Store pickup notification sent to %s for gift card %s', 'massnahme-gift-cards'),
+                $store_email,
+                $code
+            ));
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Send pickup confirmation to purchaser
+     */
+    public function send_pickup_confirmation($code, $order) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            return false;
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $store_locations = $settings['store_locations'] ?? [];
+        $pickup_location_id = $gift_card->pickup_location;
+        $store = $store_locations[$pickup_location_id] ?? null;
+
+        $email_data = [
+            'code' => $gift_card->code,
+            'amount' => $gift_card->amount,
+            'recipient_name' => $gift_card->recipient_name,
+            'message' => $gift_card->message,
+            'expires_at' => $gift_card->expires_at,
+            'store' => $store,
+            'order' => $order
+        ];
+
+        $email_content = $this->get_email_template('pickup-confirmation', $email_data);
+
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        return wp_mail(
+            $gift_card->purchaser_email,
+            $this->get_email_subject('pickup-confirmation', $email_data),
+            $email_content,
+            $headers
+        );
+    }
+
+    /**
+     * Send shipping confirmation to purchaser
+     */
+    public function send_shipping_confirmation($code, $order) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        $gift_card = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE code = %s",
+            $code
+        ));
+
+        if (!$gift_card) {
+            return false;
+        }
+
+        $settings = get_option('mgc_settings', []);
+
+        $email_data = [
+            'code' => $gift_card->code,
+            'amount' => $gift_card->amount,
+            'recipient_name' => $gift_card->recipient_name,
+            'message' => $gift_card->message,
+            'expires_at' => $gift_card->expires_at,
+            'shipping_time' => $settings['shipping_time'] ?? '3-5 business days',
+            'shipping_address' => $order->get_formatted_shipping_address() ?: $order->get_formatted_billing_address(),
+            'order' => $order
+        ];
+
+        $email_content = $this->get_email_template('shipping-confirmation', $email_data);
+
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        return wp_mail(
+            $gift_card->purchaser_email,
+            $this->get_email_subject('shipping-confirmation', $email_data),
+            $email_content,
+            $headers
         );
     }
     

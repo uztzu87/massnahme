@@ -148,66 +148,96 @@ class MGC_Coupon {
     
     /**
      * Update gift card balance after use
+     * Uses atomic SQL to prevent race conditions
      */
     public function update_gift_card_balance($coupon, $order_id) {
         $order = wc_get_order($order_id);
         $code = $coupon->get_code();
-        
+
         // Find how much was used from this gift card
         $used_amount = 0;
         foreach ($order->get_coupon_codes() as $applied_code) {
             if ($applied_code === $code) {
                 foreach ($order->get_items('coupon') as $item) {
                     if ($item->get_code() === $code) {
-                        $used_amount = $item->get_discount();
+                        $used_amount = floatval($item->get_discount());
                         break;
                     }
                 }
             }
         }
-        
+
         if ($used_amount <= 0) {
             return;
         }
-        
-        // Update balance in coupon meta
-        $current_balance = floatval($coupon->get_meta('_mgc_balance'));
-        $new_balance = max(0, $current_balance - $used_amount);
-        $coupon->update_meta_data('_mgc_balance', $new_balance);
-        $coupon->save();
-        
-        // Update database
+
         global $wpdb;
         $table = $wpdb->prefix . 'mgc_gift_cards';
-        
-        $wpdb->update(
-            $table,
-            [
-                'balance' => $new_balance,
-                'status' => $new_balance <= 0 ? 'used' : 'active'
-            ],
-            ['code' => $code]
-        );
-        
-        // Add order note
-        $order->add_order_note(sprintf(
-            __('Gift card %s used. Amount: %s, Remaining balance: %s', 'massnahme-gift-cards'),
-            $code,
-            wc_price($used_amount),
-            wc_price($new_balance)
-        ));
-        
-        // Log usage in database
-        $wpdb->insert(
-            $wpdb->prefix . 'mgc_gift_card_usage',
-            [
-                'gift_card_code' => $code,
-                'order_id' => $order_id,
-                'amount_used' => $used_amount,
-                'remaining_balance' => $new_balance,
-                'used_at' => current_time('mysql')
-            ]
-        );
+
+        // Use atomic SQL update to prevent race conditions
+        // This ensures the balance is calculated in the database, not PHP
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            // Lock the row and get current balance atomically
+            $gift_card = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table WHERE code = %s FOR UPDATE",
+                $code
+            ));
+
+            if (!$gift_card) {
+                $wpdb->query('ROLLBACK');
+                return;
+            }
+
+            $current_balance = floatval($gift_card->balance);
+
+            // Prevent over-spending: only deduct what's available
+            $actual_deduction = min($used_amount, $current_balance);
+            $new_balance = max(0, $current_balance - $actual_deduction);
+
+            // Update database atomically
+            $wpdb->update(
+                $table,
+                [
+                    'balance' => $new_balance,
+                    'status' => $new_balance <= 0 ? 'used' : 'active'
+                ],
+                ['code' => $code],
+                ['%f', '%s'],
+                ['%s']
+            );
+
+            // Update coupon meta
+            $coupon->update_meta_data('_mgc_balance', $new_balance);
+            $coupon->save();
+
+            // Log usage in database
+            $wpdb->insert(
+                $wpdb->prefix . 'mgc_gift_card_usage',
+                [
+                    'gift_card_code' => $code,
+                    'order_id' => $order_id,
+                    'amount_used' => $actual_deduction,
+                    'remaining_balance' => $new_balance,
+                    'used_at' => current_time('mysql')
+                ]
+            );
+
+            $wpdb->query('COMMIT');
+
+            // Add order note
+            $order->add_order_note(sprintf(
+                __('Gift card %s used. Amount: %s, Remaining balance: %s', 'massnahme-gift-cards'),
+                $code,
+                wc_price($actual_deduction),
+                wc_price($new_balance)
+            ));
+
+        } catch (Exception $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('MGC Balance Update Error: ' . $e->getMessage());
+        }
     }
     
     /**

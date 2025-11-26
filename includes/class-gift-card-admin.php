@@ -79,19 +79,43 @@ class MGC_Admin {
         // Handle form submission
         if (isset($_POST['mgc_save_settings'])) {
             check_admin_referer('mgc_settings_nonce');
-            
+
+            // Sanitize store locations
+            $store_locations = [];
+            if (!empty($_POST['store_locations']) && is_array($_POST['store_locations'])) {
+                foreach ($_POST['store_locations'] as $index => $location) {
+                    if (!empty($location['name'])) {
+                        $store_locations[$index] = [
+                            'name' => sanitize_text_field($location['name']),
+                            'address' => sanitize_textarea_field($location['address'] ?? ''),
+                            'email' => sanitize_email($location['email'] ?? ''),
+                            'phone' => sanitize_text_field($location['phone'] ?? ''),
+                            'hours' => sanitize_text_field($location['hours'] ?? '')
+                        ];
+                    }
+                }
+            }
+
             $settings = [
                 'expiry_days' => intval($_POST['expiry_days']),
                 'code_prefix' => sanitize_text_field($_POST['code_prefix']),
                 'enable_pdf' => isset($_POST['enable_pdf']),
-                'enable_qr' => isset($_POST['enable_qr'])
+                'enable_qr' => isset($_POST['enable_qr']),
+                // Delivery options
+                'enable_digital' => isset($_POST['enable_digital']),
+                'enable_pickup' => isset($_POST['enable_pickup']),
+                'enable_shipping' => isset($_POST['enable_shipping']),
+                'shipping_cost' => floatval($_POST['shipping_cost'] ?? 9.95),
+                'shipping_time' => sanitize_text_field($_POST['shipping_time'] ?? '3-5 business days'),
+                // Store locations
+                'store_locations' => $store_locations
             ];
-            
+
             update_option('mgc_settings', $settings);
-            
+
             echo '<div class="notice notice-success"><p>' . __('Settings saved', 'massnahme-gift-cards') . '</p></div>';
         }
-        
+
         require_once MGC_PLUGIN_DIR . 'templates/admin-settings.php';
     }
     
