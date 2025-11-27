@@ -9,6 +9,7 @@ if (!defined('ABSPATH')) {
 
 global $wpdb;
 $table = $wpdb->prefix . 'mgc_gift_cards';
+$currency_symbol = html_entity_decode(get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8');
 
 // Get statistics
 $total_cards = $wpdb->get_var("SELECT COUNT(*) FROM $table");
@@ -47,6 +48,64 @@ $recent_cards = $wpdb->get_results(
                 <h3><?php echo wc_price($remaining_value); ?></h3>
                 <p><?php _e('Outstanding Balance', 'massnahme-gift-cards'); ?></p>
             </div>
+        </div>
+
+        <!-- Create Gift Card Section -->
+        <div class="mgc-create-card-section">
+            <h2><?php _e('Create Gift Card', 'massnahme-gift-cards'); ?></h2>
+            <p class="description"><?php _e('Create a new gift card manually (e.g., for physical gift cards with pre-printed codes).', 'massnahme-gift-cards'); ?></p>
+
+            <form id="mgc-create-card-form" class="mgc-create-form">
+                <div class="mgc-form-row">
+                    <div class="mgc-form-field">
+                        <label for="mgc-create-code"><?php _e('Gift Card Code', 'massnahme-gift-cards'); ?></label>
+                        <input type="text" id="mgc-create-code" name="code" placeholder="<?php esc_attr_e('Leave empty for auto-generate or enter custom code', 'massnahme-gift-cards'); ?>">
+                        <p class="field-hint"><?php _e('Custom code for physical gift cards, or leave empty to auto-generate.', 'massnahme-gift-cards'); ?></p>
+                    </div>
+                    <div class="mgc-form-field">
+                        <label for="mgc-create-amount"><?php _e('Amount', 'massnahme-gift-cards'); ?> <span class="required">*</span></label>
+                        <div class="mgc-input-with-symbol">
+                            <span class="mgc-currency"><?php echo esc_html($currency_symbol); ?></span>
+                            <input type="number" id="mgc-create-amount" name="amount" step="0.01" min="1" required>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mgc-form-row">
+                    <div class="mgc-form-field">
+                        <label for="mgc-create-recipient-name"><?php _e('Recipient Name', 'massnahme-gift-cards'); ?></label>
+                        <input type="text" id="mgc-create-recipient-name" name="recipient_name" placeholder="<?php esc_attr_e('Optional', 'massnahme-gift-cards'); ?>">
+                    </div>
+                    <div class="mgc-form-field">
+                        <label for="mgc-create-recipient-email"><?php _e('Recipient Email', 'massnahme-gift-cards'); ?></label>
+                        <input type="email" id="mgc-create-recipient-email" name="recipient_email" placeholder="<?php esc_attr_e('Optional', 'massnahme-gift-cards'); ?>">
+                    </div>
+                </div>
+
+                <div class="mgc-form-row">
+                    <div class="mgc-form-field mgc-form-field-full">
+                        <label for="mgc-create-message"><?php _e('Personal Message', 'massnahme-gift-cards'); ?></label>
+                        <textarea id="mgc-create-message" name="message" rows="2" placeholder="<?php esc_attr_e('Optional message for the recipient', 'massnahme-gift-cards'); ?>"></textarea>
+                    </div>
+                </div>
+
+                <div class="mgc-form-row">
+                    <div class="mgc-form-field">
+                        <label>
+                            <input type="checkbox" id="mgc-create-send-email" name="send_email" value="1">
+                            <?php _e('Send gift card email to recipient', 'massnahme-gift-cards'); ?>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mgc-form-actions">
+                    <button type="submit" class="button button-primary button-large" id="mgc-create-submit">
+                        <?php _e('Create Gift Card', 'massnahme-gift-cards'); ?>
+                    </button>
+                </div>
+
+                <div id="mgc-create-result" class="mgc-create-result" style="display: none;"></div>
+            </form>
         </div>
 
         <!-- Recent Gift Cards Table -->
@@ -326,5 +385,132 @@ $recent_cards = $wpdb->get_results(
 
 .mgc-edit-balance {
     white-space: nowrap;
+}
+
+/* Create Gift Card Section */
+.mgc-create-card-section {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 30px;
+}
+
+.mgc-create-card-section h2 {
+    margin-top: 0;
+    margin-bottom: 5px;
+}
+
+.mgc-create-card-section > .description {
+    margin-bottom: 20px;
+    color: #646970;
+}
+
+.mgc-create-form .mgc-form-row {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.mgc-create-form .mgc-form-field {
+    flex: 1;
+}
+
+.mgc-create-form .mgc-form-field-full {
+    flex: 100%;
+}
+
+.mgc-create-form label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #1d2327;
+}
+
+.mgc-create-form .required {
+    color: #d63638;
+}
+
+.mgc-create-form input[type="text"],
+.mgc-create-form input[type="email"],
+.mgc-create-form input[type="number"],
+.mgc-create-form textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.mgc-create-form textarea {
+    resize: vertical;
+}
+
+.mgc-create-form .field-hint {
+    margin: 5px 0 0 0;
+    font-size: 12px;
+    color: #646970;
+}
+
+.mgc-input-with-symbol {
+    display: flex;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.mgc-input-with-symbol .mgc-currency {
+    background: #f6f7f7;
+    padding: 8px 12px;
+    border-right: 1px solid #8c8f94;
+    font-weight: 600;
+    color: #646970;
+}
+
+.mgc-input-with-symbol input {
+    border: none !important;
+    flex: 1;
+}
+
+.mgc-form-actions {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #dcdcde;
+}
+
+.mgc-create-result {
+    margin-top: 15px;
+    padding: 12px 15px;
+    border-radius: 4px;
+}
+
+.mgc-create-result.success {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.mgc-create-result.error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+.mgc-created-code {
+    display: inline-block;
+    background: #fff;
+    padding: 5px 15px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 16px;
+    font-weight: 700;
+    margin-left: 10px;
+}
+
+@media (max-width: 768px) {
+    .mgc-create-form .mgc-form-row {
+        flex-direction: column;
+        gap: 15px;
+    }
 }
 </style>

@@ -161,74 +161,16 @@ class MGC_Simple_PDF {
         // First decode HTML entities
         $text = html_entity_decode($text, ENT_QUOTES, 'UTF-8');
 
-        // Map common UTF-8 characters to WinAnsiEncoding (CP1252) octal codes
-        // This preserves German umlauts, Euro symbol, and other common chars
-        $utf8_to_winansi = [
-            // Euro symbol
-            '€' => '\200',
-            // German characters
-            'ä' => '\344',
-            'ö' => '\366',
-            'ü' => '\374',
-            'Ä' => '\304',
-            'Ö' => '\326',
-            'Ü' => '\334',
-            'ß' => '\337',
-            // French characters
-            'é' => '\351',
-            'è' => '\350',
-            'ê' => '\352',
-            'ë' => '\353',
-            'à' => '\340',
-            'â' => '\342',
-            'ù' => '\371',
-            'û' => '\373',
-            'ô' => '\364',
-            'î' => '\356',
-            'ï' => '\357',
-            'ç' => '\347',
-            'É' => '\311',
-            'È' => '\310',
-            'Ê' => '\312',
-            'À' => '\300',
-            // Spanish/Portuguese
-            'ñ' => '\361',
-            'Ñ' => '\321',
-            'á' => '\341',
-            'í' => '\355',
-            'ó' => '\363',
-            'ú' => '\372',
-            // Other common
-            '°' => '\260',
-            '©' => '\251',
-            '®' => '\256',
-            '™' => '\231',
-            '–' => '\226',  // en-dash
-            '—' => '\227',  // em-dash
-            ''' => '\222',  // right single quote
-            ''' => '\221',  // left single quote
-            '"' => '\223',  // left double quote
-            '"' => '\224',  // right double quote
-            '•' => '\225',  // bullet
-            '…' => '\205',  // ellipsis
-        ];
-
-        // Replace UTF-8 characters with their WinAnsi octal equivalents
-        $text = str_replace(
-            array_keys($utf8_to_winansi),
-            array_values($utf8_to_winansi),
-            $text
-        );
-
-        // For any remaining non-ASCII characters, try iconv as fallback
-        // This handles less common characters with transliteration
-        $text = @iconv('UTF-8', 'CP1252//TRANSLIT//IGNORE', $text);
-        if ($text === false) {
-            // If iconv fails, strip non-ASCII
+        // Convert UTF-8 to CP1252 (WinAnsiEncoding) - handles €, umlauts, etc.
+        $converted = @iconv('UTF-8', 'CP1252//TRANSLIT//IGNORE', $text);
+        if ($converted !== false) {
+            $text = $converted;
+        } else {
+            // If iconv fails completely, strip non-ASCII
             $text = preg_replace('/[^\x20-\x7E]/', '', $text);
         }
 
-        // Escape PDF special characters
+        // Escape PDF special characters (must be done AFTER encoding conversion)
         $text = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
 
         return $text;

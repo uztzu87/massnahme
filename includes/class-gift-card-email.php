@@ -533,4 +533,47 @@ class MGC_Email {
         include MGC_PLUGIN_DIR . 'templates/pdf/gift-card-pdf.php';
         return ob_get_clean();
     }
+
+    /**
+     * Send gift card email for manually created gift cards
+     */
+    public function send_manual_gift_card($gift_card, $email_data) {
+        if (empty($gift_card->recipient_email)) {
+            return false;
+        }
+
+        // Prepare email data
+        $data = [
+            'code' => $gift_card->code,
+            'amount' => $gift_card->amount,
+            'balance' => $gift_card->balance,
+            'message' => $gift_card->message,
+            'expires_at' => $gift_card->expires_at,
+            'purchaser_name' => $email_data['purchaser_name'] ?? get_bloginfo('name'),
+            'order' => null // No order for manual cards
+        ];
+
+        // Get email template
+        $email_content = $this->get_email_template('gift-card', $data);
+
+        // Email headers
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: ' . get_bloginfo('name') . ' <' . get_option('woocommerce_email_from_address') . '>'
+        ];
+
+        // Send to recipient
+        $sent = wp_mail(
+            $gift_card->recipient_email,
+            sprintf(
+                __('Your %s Gift Card', 'massnahme-gift-cards'),
+                get_bloginfo('name')
+            ),
+            $email_content,
+            $headers,
+            $this->get_attachments($gift_card)
+        );
+
+        return $sent;
+    }
 }

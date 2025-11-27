@@ -28,6 +28,7 @@ class MGC_Admin {
         add_action('wp_ajax_mgc_update_balance', [$this, 'ajax_update_balance']);
         add_action('wp_ajax_mgc_staff_lookup', [$this, 'ajax_staff_lookup']);
         add_action('wp_ajax_mgc_update_pickup_status', [$this, 'ajax_update_pickup_status']);
+        add_action('wp_ajax_mgc_create_gift_card', [$this, 'ajax_create_gift_card']);
     }
     
     public function add_menu_pages() {
@@ -421,5 +422,148 @@ class MGC_Admin {
         ];
 
         wp_mail($to, $subject, $message, $headers);
+    }
+
+    /**
+     * AJAX handler for creating gift cards manually
+     */
+    public function ajax_create_gift_card() {
+        check_ajax_referer('mgc_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(__('Permission denied', 'massnahme-gift-cards'));
+        }
+
+        // Get and validate inputs
+        $custom_code = isset($_POST['code']) ? sanitize_text_field(strtoupper(trim($_POST['code']))) : '';
+        $amount = isset($_POST['amount']) ? floatval($_POST['amount']) : 0;
+        $recipient_name = isset($_POST['recipient_name']) ? sanitize_text_field($_POST['recipient_name']) : '';
+        $recipient_email = isset($_POST['recipient_email']) ? sanitize_email($_POST['recipient_email']) : '';
+        $message = isset($_POST['message']) ? sanitize_textarea_field($_POST['message']) : '';
+        $send_email = isset($_POST['send_email']) && $_POST['send_email'] == '1';
+
+        // Validate amount
+        if ($amount <= 0) {
+            wp_send_json_error(__('Please enter a valid amount', 'massnahme-gift-cards'));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+
+        // Generate or validate code
+        if (!empty($custom_code)) {
+            // Check if custom code already exists
+            $exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM $table WHERE code = %s",
+                $custom_code
+            ));
+
+            if ($exists > 0) {
+                wp_send_json_error(__('This gift card code already exists. Please use a different code.', 'massnahme-gift-cards'));
+            }
+
+            // Validate code format (only alphanumeric and hyphens)
+            if (!preg_match('/^[A-Z0-9\-]+$/', $custom_code)) {
+                wp_send_json_error(__('Gift card code can only contain letters, numbers, and hyphens.', 'massnahme-gift-cards'));
+            }
+
+            $code = $custom_code;
+        } else {
+            // Auto-generate code
+            $code = $this->generate_admin_code();
+        }
+
+        $settings = get_option('mgc_settings', []);
+        $expiry_days = $settings['expiry_days'] ?? 730;
+
+        // Insert the gift card
+        $result = $wpdb->insert(
+            $table,
+            [
+                'code' => $code,
+                'amount' => $amount,
+                'balance' => $amount,
+                'order_id' => 0, // 0 indicates manual creation
+                'purchaser_email' => wp_get_current_user()->user_email,
+                'recipient_email' => $recipient_email ?: null,
+                'recipient_name' => $recipient_name ?: null,
+                'message' => $message ?: null,
+                'delivery_method' => 'manual',
+                'pickup_location' => null,
+                'expires_at' => date('Y-m-d H:i:s', strtotime('+' . $expiry_days . ' days')),
+                'status' => 'active',
+                'created_at' => current_time('mysql')
+            ]
+        );
+
+        if ($result === false) {
+            wp_send_json_error(__('Failed to create gift card. Please try again.', 'massnahme-gift-cards'));
+        }
+
+        // Create WooCommerce coupon for the gift card
+        MGC_Coupon::get_instance()->create_coupon($code, $amount, 0);
+
+        // Log the activity
+        if (class_exists('MGC_Core')) {
+            MGC_Core::get_instance()->log_admin_activity(
+                'create_gift_card',
+                sprintf(__('Created gift card with amount %s', 'massnahme-gift-cards'), wc_price($amount)),
+                $code
+            );
+        }
+
+        // Send email if requested and recipient email exists
+        if ($send_email && !empty($recipient_email)) {
+            $gift_card = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table WHERE code = %s",
+                $code
+            ));
+
+            if ($gift_card) {
+                // Create a mock order object for the email template
+                $email_data = [
+                    'code' => $gift_card->code,
+                    'amount' => $gift_card->amount,
+                    'balance' => $gift_card->balance,
+                    'message' => $gift_card->message,
+                    'expires_at' => $gift_card->expires_at,
+                    'purchaser_name' => wp_get_current_user()->display_name
+                ];
+
+                MGC_Email::get_instance()->send_manual_gift_card($gift_card, $email_data);
+            }
+        }
+
+        wp_send_json_success([
+            'message' => __('Gift card created successfully!', 'massnahme-gift-cards'),
+            'code' => $code,
+            'amount' => $amount
+        ]);
+    }
+
+    /**
+     * Generate a unique code for admin-created gift cards
+     */
+    private function generate_admin_code() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'mgc_gift_cards';
+        $settings = get_option('mgc_settings', []);
+        $prefix = $settings['code_prefix'] ?: 'MASS';
+
+        do {
+            // Generate numeric-only random part
+            $random_numbers = '';
+            for ($i = 0; $i < 6; $i++) {
+                $random_numbers .= mt_rand(0, 9);
+            }
+            $code = sprintf('%s-%d-%s', $prefix, date('Y'), $random_numbers);
+
+            $exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM $table WHERE code = %s",
+                $code
+            ));
+        } while ($exists > 0);
+
+        return $code;
     }
 }

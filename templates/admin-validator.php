@@ -8,6 +8,8 @@ defined('ABSPATH') || exit;
 if (!current_user_can('manage_woocommerce')) {
     return;
 }
+
+$currency_symbol = html_entity_decode(get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8');
 ?>
 <div class="wrap mgc-staff-validator">
     <h1><?php _e('Gift Card Validator', 'massnahme-gift-cards'); ?></h1>
@@ -75,7 +77,7 @@ if (!current_user_can('manage_woocommerce')) {
                 <h3><?php _e('Redeem Amount', 'massnahme-gift-cards'); ?></h3>
 
                 <div class="mgc-redemption-input-group">
-                    <span class="mgc-currency-symbol"><?php echo get_woocommerce_currency_symbol(); ?></span>
+                    <span class="mgc-currency-symbol"><?php echo esc_html($currency_symbol); ?></span>
                     <input type="number"
                            id="mgc-redeem-amount"
                            class="mgc-redeem-input"
@@ -85,10 +87,10 @@ if (!current_user_can('manage_woocommerce')) {
                 </div>
 
                 <div class="mgc-quick-amounts">
-                    <button type="button" class="mgc-quick-amount" data-amount="10">€10</button>
-                    <button type="button" class="mgc-quick-amount" data-amount="25">€25</button>
-                    <button type="button" class="mgc-quick-amount" data-amount="50">€50</button>
-                    <button type="button" class="mgc-quick-amount" data-amount="100">€100</button>
+                    <button type="button" class="mgc-quick-amount" data-amount="10"><?php echo esc_html($currency_symbol); ?>10</button>
+                    <button type="button" class="mgc-quick-amount" data-amount="25"><?php echo esc_html($currency_symbol); ?>25</button>
+                    <button type="button" class="mgc-quick-amount" data-amount="50"><?php echo esc_html($currency_symbol); ?>50</button>
+                    <button type="button" class="mgc-quick-amount" data-amount="100"><?php echo esc_html($currency_symbol); ?>100</button>
                     <button type="button" class="mgc-quick-amount mgc-full-amount" data-amount="full"><?php _e('Full Balance', 'massnahme-gift-cards'); ?></button>
                 </div>
 

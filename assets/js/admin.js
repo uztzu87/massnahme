@@ -138,6 +138,68 @@
                 currency: mgc_admin.currency || 'EUR'
             }).format(amount);
         }
+
+        // Create Gift Card form handler
+        $('#mgc-create-card-form').on('submit', function(e) {
+            e.preventDefault();
+
+            var $form = $(this);
+            var $submit = $('#mgc-create-submit');
+            var $result = $('#mgc-create-result');
+
+            var amount = parseFloat($('#mgc-create-amount').val());
+            if (!amount || amount <= 0) {
+                $result.removeClass('success').addClass('error')
+                    .html('Please enter a valid amount')
+                    .show();
+                return;
+            }
+
+            $submit.prop('disabled', true).text('Creating...');
+            $result.hide();
+
+            $.ajax({
+                url: mgc_admin.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'mgc_create_gift_card',
+                    nonce: mgc_admin.nonce,
+                    code: $('#mgc-create-code').val().trim(),
+                    amount: amount,
+                    recipient_name: $('#mgc-create-recipient-name').val().trim(),
+                    recipient_email: $('#mgc-create-recipient-email').val().trim(),
+                    message: $('#mgc-create-message').val().trim(),
+                    send_email: $('#mgc-create-send-email').is(':checked') ? 1 : 0
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $result.removeClass('error').addClass('success')
+                            .html(response.data.message + '<span class="mgc-created-code">' + response.data.code + '</span>')
+                            .show();
+
+                        // Reset form
+                        $form[0].reset();
+
+                        // Refresh page after 2 seconds to show new card
+                        setTimeout(function() {
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        $result.removeClass('success').addClass('error')
+                            .html(response.data || 'Error creating gift card')
+                            .show();
+                    }
+                },
+                error: function() {
+                    $result.removeClass('success').addClass('error')
+                        .html('Connection error. Please try again.')
+                        .show();
+                },
+                complete: function() {
+                    $submit.prop('disabled', false).text('Create Gift Card');
+                }
+            });
+        });
     });
 
 })(jQuery);
